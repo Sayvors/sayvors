@@ -112,6 +112,9 @@ Perplexity answers and must never be presented as one.
   that carries the original prompt and `carried_from_question_id`; the partial
   parent remains unchanged. Latest-history projections suppress superseded
   ancestor rows so owners see each effective question once.
+- A manual new research cycle intentionally reruns the same canonical customer
+  questions as linked `rerun` rows, refreshing evidence without rewriting the
+  prior version. Adaptive expansion still skips redundant questions.
 - Canonical question identity is enforced by a partial unique index for all
   non-resume origins; resume lineage may intentionally repeat the parent text.
 - `ai_visibility.query_set` is internal-only. The generic job API cannot submit,

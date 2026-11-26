@@ -1,10 +1,12 @@
 """Durable business-aware query-set generation handler."""
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
 
-from app.modules.ai_visibility import batch_jobs, query_sets
+from app.modules.ai_visibility import batch_jobs, query_sets, service
+from app.modules.ai_visibility import questions
 from app.modules.ai_visibility.models import (
     AiVisibilityPrompt,
     AiVisibilityQuestion,
@@ -147,6 +149,88 @@ async def test_query_set_job_uses_real_synchronous_question_generator(
             select(AiVisibilityQuestion).where(AiVisibilityQuestion.query_set_id == query_set.id)
         )
     ).scalars().all()
+
+
+@pytest.mark.asyncio
+async def test_manual_cycle_reruns_existing_questions_instead_of_failing(
+    db, user_id, channel_id, monkeypatch
+):
+    first = await query_sets.start_query_set(db, user_id, channel_id)
+    first.status = "completed"
+    await db.commit()
+    second = await query_sets.start_query_set(db, user_id, channel_id)
+    job = await db.get(Job, second.job_id)
+    job.status = "running"
+    job.lease_owner = "worker-rerun"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    await db.commit()
+
+    async def _profile(*_args):
+        return {
+            "name": "Sayvors",
+            "categories": {"primary": "Recruitment office"},
+            "description": "Licensed manpower and domestic worker recruitment",
+            "services": ["Domestic worker recruitment"],
+            "address": "Makkah",
+            "locality": "Makkah",
+        }
+
+    monkeypatch.setattr(batch_jobs.profile, "load_business_profile", _profile)
+    profile_data = {
+        "name": "Sayvors",
+        "categories": {"primary": "Recruitment office"},
+        "description": "Licensed manpower and domestic worker recruitment",
+        "services": ["Domestic worker recruitment"],
+        "address": "Makkah",
+        "locality": "Makkah",
+    }
+    generated = questions.generate_questions(profile_data, limit=8)
+    # Seed one already-researched canonical question so the real generator's
+    # matching output takes the explicit rerun path.
+    previous_text = next(item.question_text for item in generated if item.language == "ar")
+    previous = AiVisibilityQuestion(
+        query_set_id=first.id,
+        tenant_id=user_id,
+        channel_id=channel_id,
+        question_key="q001",
+        question_text=previous_text,
+        normalized_question_hash=hashlib.sha256(
+            questions._normalize(previous_text).encode("utf-8")
+        ).hexdigest(),
+        language="ar",
+        customer_intent="product_discovery",
+        industry_relevance=90,
+        service_relevance=95,
+        business_relevance_score=92,
+        research_priority="P1",
+        prompt_id=None,
+        status="completed",
+        position=0,
+    )
+    # A prompt is required for rerun lineage; create and attach it.
+    prompt = AiVisibilityPrompt(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        title="Previous",
+        prompt_text=previous.question_text,
+        normalized_prompt_hash=service.prompt_hash(previous.question_text),
+        intent="product_discovery",
+        created_by=user_id,
+    )
+    db.add(prompt)
+    await db.flush()
+    previous.prompt_id = prompt.id
+    db.add(previous)
+    await db.commit()
+
+    result = await batch_jobs.handle_query_set(job, db)
+    assert result["status"] == "running"
+    rows = (await db.execute(
+        select(AiVisibilityQuestion).where(AiVisibilityQuestion.query_set_id == second.id)
+    )).scalars().all()
+    assert any(row.origin == "rerun" and row.carried_from_question_id == previous.id for row in rows), [
+        (row.question_text, row.origin, row.carried_from_question_id) for row in rows
+    ]
 
 
 @pytest.mark.asyncio

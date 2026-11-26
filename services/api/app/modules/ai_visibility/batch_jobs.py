@@ -119,6 +119,7 @@ async def _persist_questions(
                     AiVisibilityQuestion.tenant_id == query_set.tenant_id,
                     AiVisibilityQuestion.channel_id == query_set.channel_id,
                 )
+                .order_by(AiVisibilityQuestion.created_at.desc())
                 .limit(500)
             )
         ).scalars().all()
@@ -126,6 +127,16 @@ async def _persist_questions(
     question_hashes = {row.normalized_question_hash for row in existing_questions}
     question_identities = {
         questions._normalize(row.question_text) for row in existing_questions
+    }
+    existing_by_identity = {
+        questions._normalize(row.question_text): row
+        for row in existing_questions
+        if row.prompt_id is not None
+    }
+    existing_by_hash = {
+        row.normalized_question_hash: row
+        for row in existing_questions
+        if row.prompt_id is not None
     }
     existing_prompts = list(
         (
@@ -170,6 +181,33 @@ async def _persist_questions(
             or legacy_digest in question_hashes
             or identity in question_identities
         ):
+            previous = existing_by_identity.get(identity) or existing_by_hash.get(digest)
+            if origin == "initial" and previous is not None:
+                # A manual new cycle intentionally refreshes the same customer
+                # questions. Link the rerun to its immutable predecessor instead
+                # of failing the whole set as "no new questions".
+                row = AiVisibilityQuestion(
+                    query_set_id=query_set.id,
+                    tenant_id=query_set.tenant_id,
+                    channel_id=query_set.channel_id,
+                    question_key=f"q{len(rows) + 1:03d}",
+                    question_text=item.question_text,
+                    normalized_question_hash=digest,
+                    language=item.language,
+                    customer_intent=item.intent,
+                    industry_relevance=item.industry_relevance,
+                    service_relevance=item.service_relevance,
+                    geographic_context=item.geographic_context,
+                    business_relevance_score=item.business_relevance_score,
+                    research_priority=item.priority,
+                    origin="rerun",
+                    carried_from_question_id=previous.id,
+                    prompt_id=previous.prompt_id,
+                    position=len(rows),
+                )
+                db.add(row)
+                rows.append(row)
+                question_identities.add(identity)
             continue
         if identity in prompt_by_identity:
             # A matching prompt already represents this customer question;

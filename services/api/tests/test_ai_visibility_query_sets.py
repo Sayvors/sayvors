@@ -122,6 +122,23 @@ async def test_non_resume_canonical_question_is_unique_across_versions(
 
 
 @pytest.mark.asyncio
+async def test_manual_rerun_can_repeat_canonical_question(db, user_id, channel_id):
+    first = _set(user_id, channel_id, version=1, status="completed")
+    second = _set(user_id, channel_id, version=2, status="running")
+    db.add_all([first, second])
+    await db.flush()
+    original = _question(first, "Does Sayvors deliver?")
+    db.add(original)
+    await db.flush()
+    rerun = _question(second, "Does Sayvors deliver", key="q2")
+    rerun.origin = "rerun"
+    rerun.carried_from_question_id = original.id
+    db.add(rerun)
+    await db.commit()
+    assert rerun.carried_from_question_id == original.id
+
+
+@pytest.mark.asyncio
 async def test_generated_question_text_can_repeat_in_resumed_version(
     db, user_id, channel_id
 ):

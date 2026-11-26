@@ -183,8 +183,8 @@ class AiVisibilityQuestion(Base):
             "channel_id",
             "normalized_question_hash",
             unique=True,
-            postgresql_where=text("origin <> 'resume'"),
-            sqlite_where=text("origin <> 'resume'"),
+            postgresql_where=text("origin NOT IN ('resume','rerun')"),
+            sqlite_where=text("origin NOT IN ('resume','rerun')"),
         ),
     )
 

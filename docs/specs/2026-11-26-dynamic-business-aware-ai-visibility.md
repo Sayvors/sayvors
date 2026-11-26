@@ -102,7 +102,8 @@ sent to generation. Public text remains untrusted data.
   reconciled; handler re-entry cannot create duplicate children.
 - Partial/failed sets resume pending questions into a new linked version with
   `carried_from_question_id`, preserving the parent unchanged. Latest-history
-  projection suppresses superseded ancestors.
+  projection suppresses superseded ancestors. Manual new cycles create linked
+  `rerun` rows for the same canonical questions so evidence can be refreshed.
 - Query-set-linked runs are protected from legacy deletion APIs.
 - Canonical punctuation/diacritic-insensitive identity is enforced by a partial
   unique index for non-resume rows. Service alias roots cover finance/financing,
