@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import asdict
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -10,7 +11,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import async_session
+from ...core.language import detect_language
+from ...core.text import normalize_text
 from ..jobs.models import Job
+from ..jobs.service import submit_job
 from . import profile, questions, service
 from .models import (
     AiVisibilityPrompt,
@@ -22,6 +26,9 @@ from .taxonomy import classify_industry
 
 logger = logging.getLogger(__name__)
 GENERATOR_VERSION = "deterministic-v1"
+ADAPTIVE_GENERATOR_VERSION = "adaptive-v1"
+MAX_ADAPTIVE_VERSIONS = 2
+MAX_FOLLOWUP_QUESTIONS = 4
 
 
 def _now() -> datetime:
@@ -223,22 +230,37 @@ async def handle_query_set(job: Job, db: AsyncSession) -> dict:
         ).scalars().all()
     )
     if not rows:
-        query_set.phase = "loading_profile"
-        await db.commit()
-        profile_data = await profile.load_business_profile(
-            db, query_set.tenant_id, query_set.channel_id
-        )
-        generated = await questions.generate_questions(
-            profile_data, limit=questions.MAX_INITIAL_QUESTIONS
-        )
+        adaptive_raw = query_set.generation_meta_json.get("adaptive_questions") if isinstance(query_set.generation_meta_json, dict) else []
+        if adaptive_raw:
+            query_set.phase = "loading_adaptive_questions"
+            await db.commit()
+            profile_data = dict(query_set.source_snapshot_json or {})
+            generated = [
+                questions.GeneratedQuestion(**item)
+                for item in adaptive_raw
+                if isinstance(item, dict)
+            ]
+        else:
+            query_set.phase = "loading_profile"
+            await db.commit()
+            profile_data = await profile.load_business_profile(
+                db, query_set.tenant_id, query_set.channel_id
+            )
+            generated = await questions.generate_questions(
+                profile_data, limit=questions.MAX_INITIAL_QUESTIONS
+            )
         query_set = await _load_query_set(db, job)
         query_set.classification_json = _classification(profile_data)
         query_set.source_snapshot_json = _source_snapshot(profile_data)
-        query_set.generation_meta_json = {
-            "generator": GENERATOR_VERSION,
-            "languages": sorted({item.language for item in generated}),
-            "uncertainties": profile_data.get("uncertainties") or [],
-        }
+        meta = dict(query_set.generation_meta_json or {})
+        meta.update(
+            {
+                "generator": ADAPTIVE_GENERATOR_VERSION if adaptive_raw else GENERATOR_VERSION,
+                "languages": sorted({item.language for item in generated}),
+                "uncertainties": profile_data.get("uncertainties") or [],
+            }
+        )
+        query_set.generation_meta_json = meta
         if not generated:
             query_set.status = "failed"
             query_set.failure_code = "no_questions_generated"
@@ -283,6 +305,124 @@ async def handle_query_set(job: Job, db: AsyncSession) -> dict:
 
 TERMINAL_RUN_STATUSES = {"completed", "failed", "ambiguous", "insufficient_evidence"}
 TERMINAL_JOB_STATUSES = {"succeeded", "failed", "dead", "cancelled"}
+
+
+def _adaptive_candidates(
+    query_set: AiVisibilityQuerySet,
+    rows: list[AiVisibilityQuestion],
+    runs: dict[str, AiVisibilityRun],
+) -> list[questions.GeneratedQuestion]:
+    snapshot = query_set.source_snapshot_json or {}
+    existing = {normalize_text(row.question_text) for row in rows}
+    name = str(snapshot.get("name") or "this business")
+    locality = str(snapshot.get("locality") or snapshot.get("address") or "the local area")
+    confidence = float((query_set.classification_json or {}).get("confidence") or 0.7)
+    industry_score = round(confidence * 100)
+    competitors: list[str] = []
+    for run in runs.values():
+        if run.status != "completed":
+            continue
+        for item in run.competitor_mentions or []:
+            competitor = str(item.get("name") or "").strip() if isinstance(item, dict) else ""
+            if competitor and competitor not in competitors:
+                competitors.append(competitor)
+    out: list[questions.GeneratedQuestion] = []
+    for competitor in competitors[:2]:
+        templates = (
+            ("en", f"How does {name} compare with {competitor} in {locality}?"),
+            ("ar", f"كيف يقارن {name} بـ {competitor} في {locality}؟"),
+        )
+        for language, text in templates:
+            if normalize_text(text) in existing:
+                continue
+            existing.add(normalize_text(text))
+            out.append(
+                questions.GeneratedQuestion(
+                    question_text=text,
+                    language=language,
+                    intent="comparison",
+                    industry_relevance=industry_score,
+                    service_relevance=95,
+                    geographic_context=locality,
+                    business_relevance_score=round(industry_score * 0.5 + 95 * 0.3 + 100 * 0.2),
+                    priority="P1",
+                )
+            )
+    not_offered = str(snapshot.get("not_offered") or "")
+    for raw in snapshot.get("customer_questions") or []:
+        text = str(raw).strip()
+        if not text or normalize_text(text) in existing or questions._is_unoffered(text, not_offered):
+            continue
+        existing.add(normalize_text(text))
+        out.append(
+            questions.GeneratedQuestion(
+                question_text=text,
+                language="ar" if detect_language(text).code.startswith("ar") else "en",
+                intent=questions._customer_intent(text),
+                industry_relevance=industry_score,
+                service_relevance=95,
+                geographic_context=locality,
+                business_relevance_score=round(industry_score * 0.5 + 95 * 0.3 + 100 * 0.2),
+                priority="P1",
+            )
+        )
+        if len(out) >= MAX_FOLLOWUP_QUESTIONS:
+            break
+    return out[:MAX_FOLLOWUP_QUESTIONS]
+
+
+async def _maybe_create_adaptive_version(
+    db: AsyncSession,
+    query_set: AiVisibilityQuerySet,
+    rows: list[AiVisibilityQuestion],
+    runs: dict[str, AiVisibilityRun],
+) -> AiVisibilityQuerySet | None:
+    if query_set.version >= MAX_ADAPTIVE_VERSIONS:
+        return None
+    candidates = _adaptive_candidates(query_set, rows, runs)
+    if not candidates:
+        return None
+    query_set.status = "completed"
+    query_set.phase = "complete"
+    query_set.completed_at = _now()
+    await db.flush()
+    followup = AiVisibilityQuerySet(
+        tenant_id=query_set.tenant_id,
+        channel_id=query_set.channel_id,
+        version=query_set.version + 1,
+        parent_query_set_id=query_set.id,
+        status="generating",
+        phase="adaptive",
+        depth=query_set.depth,
+        classification_json=dict(query_set.classification_json or {}),
+        source_snapshot_json=dict(query_set.source_snapshot_json or {}),
+        generation_meta_json={
+            "generator": ADAPTIVE_GENERATOR_VERSION,
+            "adaptive_questions": [asdict(item) for item in candidates],
+            "parent_query_set_id": query_set.id,
+        },
+        started_at=_now(),
+    )
+    db.add(followup)
+    await db.flush()
+    job = await submit_job(
+        db,
+        tenant_id=followup.tenant_id,
+        job_type="ai_visibility.query_set",
+        payload={"query_set_id": followup.id},
+        idempotency_key=f"ai-visibility-query-set:{followup.id}",
+        subject_type="ai_visibility_query_set",
+        subject_id=followup.id,
+        lane_key=f"ai-visibility-query-set:{followup.channel_id}",
+    )
+    job.ui_title = "Adapting customer research"
+    job.ui_kind = "ai_visibility"
+    job.ui_visible = True
+    job.progress = 0
+    job.progress_label = "Preparing follow-up questions"
+    followup.job_id = job.id
+    await db.commit()
+    return followup
 
 
 async def _finalize_one(db: AsyncSession, query_set_id: str) -> bool:
@@ -371,6 +511,10 @@ async def _finalize_one(db: AsyncSession, query_set_id: str) -> bool:
         query_set.phase = "researching"
         await db.commit()
         return True
+    if completed and failed == 0:
+        followup = await _maybe_create_adaptive_version(db, query_set, rows, runs)
+        if followup is not None:
+            return True
     query_set.status = "completed" if failed == 0 else ("partial" if completed else "failed")
     query_set.phase = "complete"
     query_set.completed_at = _now()

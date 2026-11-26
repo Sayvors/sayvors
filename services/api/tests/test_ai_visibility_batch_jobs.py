@@ -5,7 +5,11 @@ import pytest
 from sqlalchemy import select
 
 from app.modules.ai_visibility import batch_jobs, query_sets
-from app.modules.ai_visibility.models import AiVisibilityQuestion, AiVisibilityRun
+from app.modules.ai_visibility.models import (
+    AiVisibilityQuestion,
+    AiVisibilityQuerySet,
+    AiVisibilityRun,
+)
 from app.modules.ai_visibility.questions import GeneratedQuestion
 from app.modules.jobs.models import Job
 
@@ -237,3 +241,65 @@ async def test_finalizer_marks_partial_when_quota_is_exhausted(
     await db.refresh(query_set)
     assert query_set.status == "partial"
     assert query_set.failure_code == "research_quota_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_finalizer_creates_adaptive_version_for_grounded_competitor(
+    db, user_id, channel_id, monkeypatch
+):
+    query_set = await _seed_two_question_set(db, user_id, channel_id, monkeypatch)
+    rows = (
+        await db.execute(
+            select(AiVisibilityQuestion)
+            .where(AiVisibilityQuestion.query_set_id == query_set.id)
+            .order_by(AiVisibilityQuestion.position)
+        )
+    ).scalars().all()
+    first = await db.get(AiVisibilityRun, rows[0].run_id)
+    first.status = "completed"
+    first.completed_at = datetime.now(timezone.utc)
+    first.competitor_mentions = [
+        {"name": "Rival Recruitment", "quote": "Rival Recruitment is recommended", "source_ids": ["S1"]}
+    ]
+    await db.commit()
+    await batch_jobs.finalize_due_query_sets(db)
+    second = await db.get(AiVisibilityRun, rows[1].run_id)
+    second.status = "completed"
+    second.completed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await batch_jobs.finalize_due_query_sets(db)
+    versions = (
+        await db.execute(
+            select(AiVisibilityQuerySet)
+            .where(
+                AiVisibilityQuerySet.tenant_id == user_id,
+                AiVisibilityQuerySet.channel_id == channel_id,
+            )
+            .order_by(AiVisibilityQuerySet.version)
+        )
+    ).scalars().all()
+    assert len(versions) == 2
+    assert versions[0].status == "completed"
+    assert versions[1].version == 2
+    assert versions[1].parent_query_set_id == versions[0].id
+    assert versions[1].generation_meta_json["adaptive_questions"]
+    assert any(
+        "Rival Recruitment" in row["question_text"]
+        for row in versions[1].generation_meta_json["adaptive_questions"]
+    )
+    followup_job = await db.get(Job, versions[1].job_id)
+    followup_job.status = "running"
+    followup_job.lease_owner = "worker-2"
+    followup_job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    await db.commit()
+    await batch_jobs.handle_query_set(followup_job, db)
+    followup_rows = (
+        await db.execute(
+            select(AiVisibilityQuestion)
+            .where(AiVisibilityQuestion.query_set_id == versions[1].id)
+            .order_by(AiVisibilityQuestion.position)
+        )
+    ).scalars().all()
+    assert followup_rows
+    assert followup_rows[0].run_id
