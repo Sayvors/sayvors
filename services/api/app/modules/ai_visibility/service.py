@@ -9,11 +9,12 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import case, delete, distinct, func, select
+from sqlalchemy import case, delete, distinct, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
+from ..billing.entitlements import get_entitlements
 from ..jobs.service import submit_job
 from .models import (
     AiVisibilityAttempt,
@@ -67,6 +68,10 @@ class RetryCooldown(ValueError):
 
 
 class RetryLimitReached(ValueError):
+    pass
+
+
+class ResearchQuotaExceeded(ValueError):
     pass
 
 
@@ -348,6 +353,8 @@ async def create_run(
     *,
     locale: str,
     depth: str = "quick",
+    query_set_id: str | None = None,
+    question_id: str | None = None,
 ) -> AiVisibilityRun:
     """Create one durable run under the prompt's durable attempt policy."""
     await _owned_channel(db, tenant_id, channel_id, lock=True)
@@ -410,6 +417,8 @@ async def create_run(
         prompt_snapshot=prompt.prompt_text,
         locale=locale,
         research_depth=depth,
+        query_set_id=query_set_id,
+        question_id=question_id,
         status="queued",
     )
     db.add(run)
@@ -609,6 +618,54 @@ async def get_run(db: AsyncSession, tenant_id: str, run_id: str):
         )
     ).scalars().all()
     return run, source_rows
+
+
+async def create_run_with_quota(
+    db: AsyncSession,
+    tenant_id: str,
+    channel_id: str,
+    prompt_id: str,
+    *,
+    locale: str,
+    depth: str = "quick",
+    query_set_id: str | None = None,
+    question_id: str | None = None,
+) -> AiVisibilityRun:
+    """Create a child run with an atomic tenant/month quota check.
+
+    Router preflight is only a fast fail. Background workers can race across
+    channels, so PostgreSQL callers serialize on a transaction advisory lock
+    before counting and inserting the run.
+    """
+    now = datetime.now(timezone.utc)
+    if db.bind.dialect.name == "postgresql":
+        key = f"ai-visibility-quota:{tenant_id}:{depth}:{now:%Y-%m}"
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": key},
+        )
+    ent = await get_entitlements(tenant_id, db)
+    limit = (
+        ent.max_deep_research_month
+        if depth == "deep"
+        else ent.max_quick_research_month
+    )
+    if limit is not None:
+        used = await monthly_research_count(db, tenant_id, depth)
+        if used >= limit:
+            raise ResearchQuotaExceeded(
+                f"Monthly {depth} research limit reached ({used}/{limit})."
+            )
+    return await create_run(
+        db,
+        tenant_id,
+        channel_id,
+        prompt_id,
+        locale=locale,
+        depth=depth,
+        query_set_id=query_set_id,
+        question_id=question_id,
+    )
 
 
 async def retry_run(

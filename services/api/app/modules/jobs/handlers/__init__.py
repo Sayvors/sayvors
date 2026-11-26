@@ -18,6 +18,7 @@ from .review_request_send import handle_review_request_send
 from .banner_check_run import handle_banner_check_run
 from .benchmark_theme_extract import handle as handle_benchmark_theme_extract
 from .ai_visibility_research import handle as handle_ai_visibility_research
+from .ai_visibility_query_set import handle as handle_ai_visibility_query_set
 
 # Closed registry: job_type -> handler coroutine(job, db) -> dict | None
 HANDLERS: dict[str, Callable[[Any, Any], Any]] = {
@@ -31,4 +32,5 @@ HANDLERS: dict[str, Callable[[Any, Any], Any]] = {
     "media.banner_check": handle_banner_check_run,
     "benchmark.theme_extract": handle_benchmark_theme_extract,
     "ai_visibility.research": handle_ai_visibility_research,
+    "ai_visibility.query_set": handle_ai_visibility_query_set,
 }

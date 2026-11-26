@@ -16,7 +16,7 @@ admin_router = APIRouter(prefix="/api/v1/admin", tags=["admin-jobs"])
 
 # Domain APIs own authorization, idempotency, and spend preflight for these
 # jobs. The generic operator routes must not become a second, weaker entrypoint.
-INTERNAL_ONLY_JOB_TYPES = {"ai_visibility.research"}
+INTERNAL_ONLY_JOB_TYPES = {"ai_visibility.research", "ai_visibility.query_set"}
 
 
 def _client_can_see(job: Job) -> bool:

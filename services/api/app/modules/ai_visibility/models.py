@@ -142,6 +142,8 @@ class AiVisibilityQuerySet(Base):
     total_questions: Mapped[int] = mapped_column(Integer, default=0)
     completed_questions: Mapped[int] = mapped_column(Integer, default=0)
     failed_questions: Mapped[int] = mapped_column(Integer, default=0)
+    failure_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

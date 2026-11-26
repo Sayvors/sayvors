@@ -120,6 +120,7 @@ async def _amain() -> None:
     from ..modules.admin.backup import run_db_backup_scheduler
     from ..modules.benchmark.scraper import run_benchmark_scraper
     from ..modules.ai_visibility.retention import run_cleanup_worker
+    from ..modules.ai_visibility.batch_jobs import run_query_set_finalizer
 
     # Provision Kafka topics with explicit partition counts before any consumer
     # or runner starts. Prevents auto-create from making 1-partition topics.
@@ -159,6 +160,7 @@ async def _amain() -> None:
         # place_cache_enabled=false without deleting stored history.
         "benchmark-scraper": run_benchmark_scraper,
         "ai-visibility-cleanup": run_cleanup_worker,
+        "ai-visibility-finalizer": run_query_set_finalizer,
     }
     # RAG ingest worker (was lazily started from request handlers).
     loops["rag-ingest"] = rag_jobs.start_worker
