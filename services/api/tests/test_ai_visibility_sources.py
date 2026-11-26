@@ -41,9 +41,10 @@ async def test_fetch_source_rejects_private_target(monkeypatch):
         raise ValueError("private address")
 
     monkeypatch.setattr(sources, "fetch_pinned_media", _blocked)
-    row = await sources.fetch_source("run-1", 0, _result("http://127.0.0.1"))
+    row, stats = await sources.fetch_source("run-1", 0, _result("http://127.0.0.1"))
     assert row.fetch_error
     assert row.excerpt is None
+    assert stats == {"read": False, "links_found": 0, "words": 0}
 
 
 @pytest.mark.asyncio
@@ -59,9 +60,32 @@ async def test_fetch_source_extracts_bounded_text(monkeypatch):
     monkeypatch.setattr(
         sources.trafilatura, "extract", lambda *a, **k: "Evidence text"
     )
-    row = await sources.fetch_source(
+    row, stats = await sources.fetch_source(
         "run-1", 0, _result("https://example.com/page")
     )
     assert row.excerpt == "Evidence text"
     assert row.content_hash == hashlib.sha256(b"Evidence text").hexdigest()
     assert row.canonical_url == "https://example.com/page"
+    assert stats["read"] is True
+    assert stats["words"] == 2
+    assert stats["links_found"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_source_counts_outbound_links(monkeypatch):
+    body = (
+        b"<html><body><p>Evidence text</p>"
+        b'<a href="https://other.example/a">A</a>'
+        b'<a href="/relative">R</a>'
+        b'<a href="https://other.example/b">B</a></body></html>'
+    )
+    monkeypatch.setattr(
+        sources, "fetch_pinned_media", lambda *a, **k: (body, "text/html")
+    )
+    monkeypatch.setattr(
+        sources.trafilatura, "extract", lambda *a, **k: "Evidence text"
+    )
+    _row, stats = await sources.fetch_source(
+        "run-1", 0, _result("https://example.com/page")
+    )
+    assert stats["links_found"] == 2

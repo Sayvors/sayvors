@@ -76,7 +76,7 @@ export type AiVisibilityRunDetail = AiVisibilityRun & {
   cited: boolean | null;
   recommended: boolean | null;
   incorrect: boolean | null;
-  evidence_coverage: Record<string, number>;
+  evidence_coverage: Record<string, unknown>;
   competitor_mentions: Array<{ name: string; quote: string; source_ids: string[] }>;
   claims: AiVisibilityClaim[];
   actions: AiVisibilityAction[];

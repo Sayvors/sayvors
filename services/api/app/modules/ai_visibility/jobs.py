@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 import sentry_sdk
 
@@ -143,6 +144,22 @@ def _branch_tokens(branch: dict) -> set[str]:
     # distinctive part of the name (e.g. "sayvors"), not "makkah".
     distinctive = name_tokens - locality_tokens
     return distinctive or name_tokens
+
+
+def _mentions_branch(row, tokens: set[str]) -> bool:
+    """True when a fetched page's own text names the branch.
+
+    Unlike the gate on *usable* sources, this counts every readable page, so
+    the facts rail can report how many of the pages actually read mention the
+    branch instead of only the ones the brief cited.
+    """
+    if not tokens:
+        return True
+    text = " ".join(
+        str(getattr(row, name, "") or "")
+        for name in ("url", "title", "snippet", "excerpt")
+    ).casefold()
+    return any(token in text for token in tokens)
 
 
 def _sources_are_relevant(rows, branch: dict) -> bool:
@@ -399,7 +416,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
                 )
             await ensure_active()
             await _status(db, run, "fetching")
-            snapshots = await sources.fetch_sources(
+            snapshots, read_stats = await sources.fetch_sources(
                 db,
                 run_id,
                 results,
@@ -408,6 +425,10 @@ async def handle_research(job, db: AsyncSession) -> dict:
                 else sources.MAX_SOURCES_PER_RUN,
             )
             await ensure_active()
+            domains_seen = {
+                (urlsplit(row.url).hostname or "").casefold().removeprefix("www.")
+                for row in results
+            } - {""}
             coverage["search"] = {
                 "provider": " + ".join(dict.fromkeys(providers))
                 or search.BING_PROVIDER_LABEL,
@@ -415,6 +436,18 @@ async def handle_research(job, db: AsyncSession) -> dict:
                 "result_count": len(results),
                 "fetched_count": len(snapshots),
                 "depth": run.research_depth or "quick",
+            }
+            coverage["metrics"] = {
+                "queries_run": len(queries),
+                "candidates_found": len(results),
+                "domains_found": len(domains_seen),
+                "pages_read": int(read_stats.get("pages_read", 0)),
+                "pages_failed": int(read_stats.get("pages_failed", 0)),
+                "links_found": int(read_stats.get("links_found", 0)),
+                "words_read": int(read_stats.get("words_read", 0)),
+                "brand_mentions": sum(
+                    1 for row in snapshots if _mentions_branch(row, distinctive)
+                ),
             }
         usable = [row for row in snapshots if row.excerpt]
         if not _sources_are_relevant(usable, branch):
@@ -429,6 +462,13 @@ async def handle_research(job, db: AsyncSession) -> dict:
                     extra={"run_id": run_id, "tenant_id": tenant_id},
                 )
                 coverage["platforms"] = []
+            platforms = coverage["platforms"] or []
+            metrics = dict(coverage.get("metrics") or {})
+            metrics["platforms_checked"] = len(platforms)
+            metrics["platforms_found"] = sum(
+                1 for p in platforms if p.get("status") == "found"
+            )
+            coverage["metrics"] = metrics
             owned_rows, payload = await _owned_evidence_fallback(db, run, branch)
             source_payload = _source_payload(owned_rows)
             payload = validation.validate(payload, source_payload, branch)

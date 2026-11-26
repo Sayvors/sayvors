@@ -9,6 +9,7 @@ import { queryKeys } from "@/lib/query-keys";
 import { researchErrorMessage } from "@/lib/ai-visibility-errors";
 import DecisionBrief from "./DecisionBrief";
 import ResearchActivity from "./ResearchActivity";
+import ResearchFacts from "./ResearchFacts";
 
 const PROGRESS: Record<string, number> = {
   queued: 8,
@@ -94,7 +95,8 @@ export default function ResearchRunPanel({
           <div>
             <p className="text-[12px] font-bold text-[var(--ai-ink)]">{stage}</p>
             <p className="mt-0.5 font-mono text-[10px] text-[var(--ai-muted)]">
-              {detail.evidence_coverage.source_count ?? 0} {copy.sources.toLowerCase()}
+              {Number(detail.evidence_coverage.source_count ?? 0)}{" "}
+              {copy.sources.toLowerCase()}
               {Number(detail.evidence_coverage.owned_source_count ?? 0) > 0 &&
               Number(detail.evidence_coverage.third_party_source_count ?? 0) === 0
                 ? ` · ${copy.ownedEvidenceOnly}`
@@ -121,6 +123,7 @@ export default function ResearchRunPanel({
           </button>
         )}
       </div>
+      <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
       <ResearchActivity
         status={detail.status}
         coverage={detail.evidence_coverage}

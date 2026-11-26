@@ -63,6 +63,15 @@ def test_source_payload_preserves_original_citation_labels():
     assert [row["label"] for row in payload] == ["S2", "S3"]
 
 
+def _read_stats(rows, links_found=0):
+    return {
+        "pages_read": sum(1 for row in rows if row.excerpt),
+        "pages_failed": sum(1 for row in rows if not row.excerpt),
+        "links_found": links_found,
+        "words_read": sum(len((row.excerpt or "").split()) for row in rows),
+    }
+
+
 @pytest.mark.asyncio
 async def test_job_completes_with_validated_brief(
     db, user_id, channel_id, monkeypatch
@@ -76,7 +85,7 @@ async def test_job_completes_with_validated_brief(
         ]
 
     async def _fetch(_db, run_id, rows, **_kwargs):
-        return [
+        fetched = [
             AiVisibilitySource(
                 run_id=run_id,
                 position=0,
@@ -94,6 +103,7 @@ async def test_job_completes_with_validated_brief(
                 excerpt="Acme Coffee serves fresh coffee.",
             ),
         ]
+        return fetched, _read_stats(fetched, links_found=17)
 
     payload = research.ResearchPayload(
         answer="Acme Coffee is recommended [S1].",
@@ -137,6 +147,12 @@ async def test_job_completes_with_validated_brief(
     assert run.mentioned is True
     assert run.claims_json[0]["status"] == "supported"
     assert run.actions_json
+    metrics = run.evidence_coverage["metrics"]
+    assert metrics["candidates_found"] == 2
+    assert metrics["pages_read"] == 2
+    assert metrics["links_found"] == 17
+    assert metrics["domains_found"] == 2
+    assert metrics["brand_mentions"] == 2
 
 
 @pytest.mark.asyncio
@@ -172,9 +188,9 @@ async def test_reclaimed_job_reuses_committed_source_snapshots(
         called.append("search")
         return []
 
-    async def _fetch(*_args):
+    async def _fetch(*_args, **_kwargs):
         called.append("fetch")
-        return []
+        return [], _read_stats([])
 
     async def _complete(*_args, **_kwargs):
         called.append("llm")
@@ -359,9 +375,9 @@ async def test_stale_worker_stops_after_search(
         await db.commit()
         return []
 
-    async def _fetch(*_args):
+    async def _fetch(*_args, **_kwargs):
         called.append("fetch")
-        return []
+        return [], _read_stats([])
 
     monkeypatch.setattr(jobs.search, "search_public_web", _search)
     monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
@@ -383,9 +399,9 @@ async def test_job_stops_if_run_disappears_during_search(
         await db.commit()
         return []
 
-    async def _fetch(*_args):
+    async def _fetch(*_args, **_kwargs):
         called.append("fetch")
-        return []
+        return [], _read_stats([])
 
     monkeypatch.setattr(jobs.search, "search_public_web", _search)
     monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
@@ -533,7 +549,7 @@ async def test_job_marks_insufficient_evidence(
         return [SimpleNamespace(url="https://a.example", title="A", snippet="")]
 
     async def _fetch(_db, run_id, rows, **_kwargs):
-        return []
+        return [], _read_stats([])
 
     async def _profiles(*_args, **_kwargs):
         return []

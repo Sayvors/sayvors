@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import trafilatura
@@ -21,6 +22,9 @@ SOURCE_CONCURRENCY = 3
 SOURCE_DOMAIN_RATE_LIMIT = 2
 SOURCE_DOMAIN_RATE_WINDOW_SECONDS = 60
 ALLOWED_CONTENT_TYPES = {"text/html", "application/xhtml+xml", "text/plain"}
+# Absolute outbound anchors inside a fetched page; counted for the run's
+# factual coverage metrics ("this many links existed in what we read").
+_LINK_ANCHOR_RE = re.compile(rb"""<a\b[^>]*?href=["']?https?://""", re.I)
 TRACKING_PARAMS = {
     "utm_source",
     "utm_medium",
@@ -73,7 +77,12 @@ def select_sources(
 
 async def fetch_source(
     run_id: str, position: int, result: SearchResult
-) -> AiVisibilitySource:
+) -> tuple[AiVisibilitySource, dict]:
+    """Fetch one page and return its snapshot plus raw-coverage stats.
+
+    The stats describe what the page actually contributed (text words,
+    outbound links) so the research UI can report facts instead of vibes.
+    """
     url = canonicalize_url(result.url)
     row = AiVisibilitySource(
         run_id=run_id,
@@ -83,6 +92,7 @@ async def fetch_source(
         title=result.title[:500],
         snippet=result.snippet[:2000],
     )
+    stats = {"read": False, "links_found": 0, "words": 0}
     try:
         domain = urlsplit(url).hostname or "unknown"
         if not await rate_limit(
@@ -114,21 +124,24 @@ async def fetch_source(
         row.excerpt = excerpt
         row.content_hash = hashlib.sha256(excerpt.encode("utf-8")).hexdigest()
         row.http_status = 200
+        stats["read"] = True
+        stats["links_found"] = len(_LINK_ANCHOR_RE.findall(body))
+        stats["words"] = len(excerpt.split())
     except Exception as exc:
         row.fetch_error = str(exc)[:1000]
-    return row
+    return row, stats
 
 
 async def fetch_sources(
     db, run_id: str, rows: list[SearchResult], *, max_sources: int = MAX_SOURCES_PER_RUN
-) -> list[AiVisibilitySource]:
+) -> tuple[list[AiVisibilitySource], dict]:
     semaphore = asyncio.Semaphore(SOURCE_CONCURRENCY)
 
     async def _one(position: int, result: SearchResult):
         async with semaphore:
             return await fetch_source(run_id, position, result)
 
-    snapshots = await asyncio.gather(
+    fetched = await asyncio.gather(
         *[
             _one(position, result)
             for position, result in enumerate(
@@ -136,6 +149,13 @@ async def fetch_sources(
             )
         ]
     )
+    snapshots = [row for row, _stats in fetched]
+    stats = {
+        "pages_read": sum(1 for _row, s in fetched if s["read"]),
+        "pages_failed": sum(1 for _row, s in fetched if not s["read"]),
+        "links_found": sum(s["links_found"] for _row, s in fetched),
+        "words_read": sum(s["words"] for _row, s in fetched),
+    }
     db.add_all(snapshots)
     await db.commit()
-    return snapshots
+    return snapshots, stats
