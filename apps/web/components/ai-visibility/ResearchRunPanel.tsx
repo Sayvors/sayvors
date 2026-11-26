@@ -8,6 +8,7 @@ import { isActiveStatus } from "@/lib/ai-visibility-metrics";
 import { queryKeys } from "@/lib/query-keys";
 import { researchErrorMessage } from "@/lib/ai-visibility-errors";
 import DecisionBrief from "./DecisionBrief";
+import ResearchActivity from "./ResearchActivity";
 
 const PROGRESS: Record<string, number> = {
   queued: 8,
@@ -120,6 +121,11 @@ export default function ResearchRunPanel({
           </button>
         )}
       </div>
+      <ResearchActivity
+        status={detail.status}
+        coverage={detail.evidence_coverage}
+        copy={copy}
+      />
       {active && (
         <div className="space-y-3" role="status">
           <div className="flex items-center justify-between gap-3">
