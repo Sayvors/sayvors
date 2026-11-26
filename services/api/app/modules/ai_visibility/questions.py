@@ -31,6 +31,22 @@ GENERIC_SUPPORT_TERMS = {
     "verify",
 }
 GENERIC_NAME_WORDS = {"company", "branch", "business", "location", "store", "shop", "office"}
+SERVICE_ALIAS_GROUPS = (
+    ("finance", "financing", "financial"),
+    ("deliver", "delivery", "shipping"),
+    ("book", "booking", "reservation"),
+    ("recruit", "recruitment", "recruiting"),
+    ("manage", "management"),
+    ("rent", "rental"),
+    ("insure", "insurance"),
+    ("repair", "maintenance"),
+    ("bridal", "bride", "wedding"),
+)
+SERVICE_TOKEN_ROOTS = {
+    alias: group[0]
+    for group in SERVICE_ALIAS_GROUPS
+    for alias in group
+}
 INDUSTRY_SCORE_WEIGHT = 0.5
 SERVICE_SCORE_WEIGHT = 0.3
 GEOGRAPHY_SCORE_WEIGHT = 0.2
@@ -94,24 +110,31 @@ def _customer_intent(text: str) -> str:
 
 
 def _is_unoffered(text: str, not_offered: str) -> bool:
-    question_tokens = set(re.findall(r"\w{3,}", normalize_text(text)))
+    question_tokens = _tokens(text)
+    question_roots = _roots(question_tokens)
     for phrase in re.split(r"[,;،؛]|\band\b|\n", not_offered.casefold()):
-        tokens = set(re.findall(r"\w{3,}", normalize_text(phrase)))
+        tokens = _tokens(phrase)
+        phrase_roots = _roots(tokens)
         if len(tokens) == 1:
             token = next(iter(tokens))
-            if any(
+            root = SERVICE_TOKEN_ROOTS.get(token, token)
+            if root in question_roots or any(
                 question == token
                 or (len(token) >= 4 and (question.startswith(token) or token.startswith(question)))
                 for question in question_tokens
             ):
                 return True
-        if len(tokens) >= 2 and len(tokens & question_tokens) >= 2:
+        if len(tokens) >= 2 and len(phrase_roots & question_roots) >= 2:
             return True
     return False
 
 
 def _tokens(value: str) -> set[str]:
     return set(re.findall(r"\w{3,}", normalize_text(value)))
+
+
+def _roots(tokens: set[str]) -> set[str]:
+    return {SERVICE_TOKEN_ROOTS.get(token, token) for token in tokens}
 
 
 def _service_match(text: str, profile: dict) -> bool:
@@ -131,14 +154,17 @@ def _service_match(text: str, profile: dict) -> bool:
         service_tokens = _tokens(label)
         if not service_tokens:
             continue
+        service_roots = _roots(service_tokens)
+        question_roots = _roots(question_tokens)
         matches = sum(
             any(
                 question == token
                 or question.startswith(token)
                 or token.startswith(question)
+                or root in question_roots
                 for question in question_tokens
             )
-            for token in service_tokens
+            for token, root in zip(service_tokens, service_roots)
         )
         if (len(service_tokens) == 1 and matches) or matches >= 2:
             return True

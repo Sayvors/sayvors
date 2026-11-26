@@ -133,6 +133,87 @@ async def test_latest_query_set_counts_distinct_source_pages(
 
 
 @pytest.mark.asyncio
+async def test_latest_query_set_excludes_failed_and_synthetic_sources(
+    db, user_id, channel_id
+):
+    query_set = AiVisibilityQuerySet(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        version=1,
+        status="completed",
+        depth="quick",
+        source_snapshot_json={"name": "Sayvors", "website": "https://sayvors.com"},
+    )
+    db.add(query_set)
+    await db.flush()
+    prompt = AiVisibilityPrompt(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        title="Question",
+        prompt_text="Is Sayvors licensed?",
+        normalized_prompt_hash="c" * 64,
+        intent="licensing",
+        created_by=user_id,
+    )
+    db.add(prompt)
+    await db.flush()
+    question = AiVisibilityQuestion(
+        query_set_id=query_set.id,
+        tenant_id=user_id,
+        channel_id=channel_id,
+        question_key="q001",
+        question_text=prompt.prompt_text,
+        normalized_question_hash=prompt.normalized_prompt_hash,
+        language="en",
+        customer_intent="licensing",
+        industry_relevance=90,
+        service_relevance=95,
+        business_relevance_score=92,
+        research_priority="P1",
+        prompt_id=prompt.id,
+        status="completed",
+        position=0,
+    )
+    db.add(question)
+    await db.flush()
+    run = AiVisibilityRun(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        prompt_id=prompt.id,
+        query_set_id=query_set.id,
+        question_id=question.id,
+        prompt_snapshot=prompt.prompt_text,
+        status="completed",
+    )
+    db.add(run)
+    await db.flush()
+    question.run_id = run.id
+    db.add_all(
+        [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=0,
+                url="https://failed.example/sayvors",
+                canonical_url="https://failed.example/sayvors",
+                fetch_error="timeout",
+            ),
+            AiVisibilitySource(
+                run_id=run.id,
+                position=1,
+                url="about:blank",
+                canonical_url="about:blank",
+                excerpt="Synthetic",
+            ),
+        ]
+    )
+    await db.commit()
+
+    latest = await query_sets.latest_query_set(db, user_id, channel_id)
+    assert latest["coverage"]["third_party_source_count"] == 0
+    assert latest["metrics"]["source_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_start_query_set_resumes_pending_questions_from_partial_set(
     db, user_id, channel_id
 ):
@@ -223,3 +304,15 @@ async def test_start_query_set_resumes_pending_questions_from_partial_set(
     await batch_jobs.handle_query_set(parent, db)
     await db.refresh(rows[0])
     assert rows[0].run_id
+    resumed_run = await db.get(AiVisibilityRun, rows[0].run_id)
+    resumed_run.status = "completed"
+    resumed_run.mentioned = True
+    await db.commit()
+    await batch_jobs.finalize_due_query_sets(db)
+
+    latest = await query_sets.latest_query_set(db, user_id, channel_id)
+    assert len(latest["questions"]) == 2
+    assert not any(row["status"] == "pending" for row in latest["questions"])
+    resumed_payload = next(row for row in latest["questions"] if row["id"] == rows[0].id)
+    assert resumed_payload["status"] == "completed"
+    assert resumed_payload["carried_from_question_id"] == questions[1].id

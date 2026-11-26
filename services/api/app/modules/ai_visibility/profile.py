@@ -105,9 +105,15 @@ def _names(value: Any, *, limit: int = MAX_CUSTOMER_QUESTIONS) -> list[str]:
     return out
 
 
-def _scrub_question(value: str, *, reviewer_name: str | None = None) -> str:
-    """Scrub identifiers and the one reviewer name known for this review."""
+def _scrub_question(
+    value: str,
+    *,
+    reviewer_name: str | None = None,
+    protected_terms: set[str] | None = None,
+) -> str:
+    """Scrub identifiers, known reviewer names, handles, and person-name cues."""
     question = scrub_pii(value)
+    protected = {term.casefold() for term in (protected_terms or set())}
     reviewer = (reviewer_name or "").strip()
     if reviewer:
         question = re.sub(
@@ -116,6 +122,42 @@ def _scrub_question(value: str, *, reviewer_name: str | None = None) -> str:
             question,
             flags=re.IGNORECASE,
         )
+        for component in re.findall(r"\w{2,}", reviewer):
+            question = re.sub(
+                rf"(?<!\w){re.escape(component)}(?!\w)",
+                "[customer]",
+                question,
+                flags=re.IGNORECASE,
+            )
+    question = re.sub(r"(?<!\w)@[A-Za-z0-9_.]{2,}", "[customer]", question)
+
+    def redact_full_name(match: re.Match) -> str:
+        phrase = match.group(0)
+        first = phrase.split()[0].casefold()
+        if first in {
+            "can", "could", "does", "did", "is", "was", "will", "would",
+            "should", "has", "have", "to", "for", "from", "with", "by",
+            "about", "ask", "contact", "email", "call", "what", "where",
+            "when", "why", "how", "who", "which",
+        }:
+            return phrase
+        return phrase if phrase.casefold() in protected else "[customer]"
+
+    question = re.sub(
+        r"\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+\b",
+        redact_full_name,
+        question,
+    )
+
+    def redact_person_cue(match: re.Match) -> str:
+        name = match.group(1)
+        return match.group(0) if name.casefold() in protected else f"{match.group(0)[:-len(name)]}[customer]"
+
+    question = re.sub(
+        r"\b(?i:can|could|does|did|is|was|will|would|should|has|have|to|for|from|with|by|about|ask|contact|email|call)\s+([A-Z][a-z]{2,})\b",
+        redact_person_cue,
+        question,
+    )
     return " ".join(question.split())
 
 
@@ -241,7 +283,10 @@ def build_branch_facts(channel: Any, profile: Any, override: Any) -> dict:
 
 
 async def _customer_voice(
-    db: AsyncSession, tenant_id: str, channel_id: str
+    db: AsyncSession,
+    tenant_id: str,
+    channel_id: str,
+    protected_terms: set[str] | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     reviews = (
         await db.execute(
@@ -266,7 +311,11 @@ async def _customer_voice(
                     themes.append(name)
         meaning = row.meaning if isinstance(row.meaning, dict) else {}
         for raw_question in _names(meaning.get("asks") or []):
-            question = _scrub_question(raw_question, reviewer_name=row.reviewer_name)
+            question = _scrub_question(
+                raw_question,
+                reviewer_name=row.reviewer_name,
+                protected_terms=protected_terms,
+            )
             if question and question not in questions:
                 questions.append(question)
     insight = (
@@ -281,7 +330,7 @@ async def _customer_voice(
     if insight and isinstance(insight.insights, dict):
         payload = insight.insights
         for raw_question in _names(payload.get("top_questions") or []):
-            question = _scrub_question(raw_question)
+            question = _scrub_question(raw_question, protected_terms=protected_terms)
             if question and question not in questions:
                 questions.append(question)
         for topic in _names(payload.get("topics") or []):
@@ -331,8 +380,25 @@ async def load_branch_facts(
     user, card = await _workspace_context(db, tenant_id)
     declared = await _declared_services(db, channel_id)
     products = await _products(db, tenant_id)
+    protected_text = " ".join(
+        str(value or "")
+        for value in (
+            facts.get("name"),
+            facts.get("description"),
+            facts.get("address"),
+            facts.get("locality"),
+            facts.get("categories"),
+            facts.get("services"),
+            getattr(user, "business_name", None),
+            getattr(card, "domain", None),
+        )
+    )
+    protected_text += " " + " ".join(
+        str(row.get("name") or "") for row in declared + products
+    )
+    protected_terms = set(re.findall(r"\w{3,}", protected_text.casefold()))
     themes, customer_questions, customer_intents = await _customer_voice(
-        db, tenant_id, channel_id
+        db, tenant_id, channel_id, protected_terms=protected_terms
     )
     declared_names = [row["name"] for row in declared if row.get("name")]
     facts["services"] = list(dict.fromkeys(facts["services"] + declared_names))

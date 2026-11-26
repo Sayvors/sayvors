@@ -176,6 +176,7 @@ class QueryQuestionOut(BaseModel):
     business_relevance_score: int
     research_priority: str
     origin: str
+    carried_from_question_id: str | None
     status: str
     run_id: str | None
     mentioned: bool | None

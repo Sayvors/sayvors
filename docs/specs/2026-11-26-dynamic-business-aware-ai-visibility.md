@@ -95,19 +95,24 @@ sent to generation. Public text remains untrusted data.
 
 - Customer asks/questions are PII-scrubbed at ingestion and again at outbound
   search/LLM boundaries. The LLM receives an allowlist of business fields, not
-  the full profile snapshot.
+  the full profile snapshot. Known reviewer-name components, handles, and
+  conservative person-name cues are redacted while business terms are protected.
 - Global UI jobs apply channel RBAC and use static titles without raw questions.
 - First-child quota failures terminalize the set; dead parent jobs are
   reconciled; handler re-entry cannot create duplicate children.
 - Partial/failed sets resume pending questions into a new linked version with
-  `carried_from_question_id`, preserving the parent unchanged.
+  `carried_from_question_id`, preserving the parent unchanged. Latest-history
+  projection suppresses superseded ancestors.
 - Query-set-linked runs are protected from legacy deletion APIs.
-- Canonical punctuation/diacritic-insensitive identity prevents duplicate
-  questions; one-word and morphological `not_offered` exclusions are honored.
+- Canonical punctuation/diacritic-insensitive identity is enforced by a partial
+  unique index for non-resume rows. Service alias roots cover finance/financing,
+  deliver/delivery, booking/reservation, and related morphology in exclusions
+  and service matching.
 - Adaptive depth is separate from branch version; adaptive origin and parent
   classification are preserved.
-- Aggregate evidence counts distinct canonical source URLs, not per-question
-  sums.
+- Aggregate evidence counts distinct canonical source URLs that were
+  successfully fetched, have excerpts, and pass branch relevance/ownership
+  checks; failed and synthetic rows are excluded.
 
 ## Retention and portability
 

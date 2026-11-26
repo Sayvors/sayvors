@@ -163,6 +163,21 @@ def test_relevant_customer_question_is_kept_ahead_of_templates():
     assert questions[0].service_relevance >= 90
 
 
+def test_derivational_not_offered_exclusion_is_conservative():
+    questions = generate_questions(
+        {
+            "name": "Sayvors",
+            "categories": {"category": "Automobile dealership"},
+            "description": "Vehicle sales",
+            "address": "Riyadh",
+            "not_offered": "finance",
+            "customer_questions": ["Does Sayvors offer financing?"],
+        },
+        limit=8,
+    )
+    assert not any("financ" in row.question_text.casefold() for row in questions)
+
+
 def test_punctuation_variants_are_deduplicated():
     questions = generate_questions(
         {

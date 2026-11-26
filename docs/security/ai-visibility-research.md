@@ -67,6 +67,10 @@ Perplexity answers and must never be presented as one.
   renumber.
 - Source snapshots commit before the LLM call. A reclaimed job reuses committed
   snapshots instead of fetching duplicate rows.
+- Aggregate evidence counts distinct canonical URLs only when the fetch
+  succeeded, an excerpt exists, and the URL is valid HTTP(S). Independent pages
+  must mention a distinctive branch token; owned pages must match an owned host.
+  Failed and synthetic rows never inflate coverage.
 
 ## Business-aware question generation
 
@@ -88,7 +92,8 @@ Perplexity answers and must never be presented as one.
   locality, an actual service/product phrase, or a relevant intent. Generic
   support chatter is excluded and cannot return through adaptive versions.
   Review asks and conversation questions are scrubbed for emails, phones,
-  addresses, long identifiers, and the known reviewer name before use.
+  addresses, long identifiers, handles, known reviewer-name components, and
+  conservative person-name cues while protecting branch/service terms.
 - The public-context collector uses the same SSRF-safe source fetcher. Website
   and public-page excerpts are untrusted data, bounded, and stored as a
   reproducible query-set snapshot. Reviewer names, raw review text, contact
@@ -105,7 +110,10 @@ Perplexity answers and must never be presented as one.
   clear-history APIs. Retention is the only eventual cleanup path.
 - Partial/failed sets with pending questions resume into a new linked version
   that carries the original prompt and `carried_from_question_id`; the partial
-  parent remains unchanged.
+  parent remains unchanged. Latest-history projections suppress superseded
+  ancestor rows so owners see each effective question once.
+- Canonical question identity is enforced by a partial unique index for all
+  non-resume origins; resume lineage may intentionally repeat the parent text.
 - `ai_visibility.query_set` is internal-only. The generic job API cannot submit,
   inspect, or cancel it. A partial unique index permits one active set per
   tenant/branch. The global UI-jobs endpoint resolves each AI Visibility job's

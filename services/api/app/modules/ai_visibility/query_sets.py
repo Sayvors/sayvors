@@ -1,6 +1,7 @@
 """Versioned query-set lifecycle and background research orchestration."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
@@ -244,6 +245,12 @@ async def latest_query_set(
         ).scalars().all()
     )
     rows.sort(key=lambda row: (version_by_id[row.query_set_id], row.position))
+    superseded = {
+        row.carried_from_question_id
+        for row in rows
+        if row.carried_from_question_id is not None
+    }
+    rows = [row for row in rows if row.id not in superseded]
     run_ids = [row.run_id for row in rows if row.run_id]
     runs = {
         run.id: run
@@ -271,6 +278,7 @@ async def latest_query_set(
                 "business_relevance_score": row.business_relevance_score,
                 "research_priority": row.research_priority,
                 "origin": row.origin,
+                "carried_from_question_id": row.carried_from_question_id,
                 "status": row.status,
                 "run_id": row.run_id,
                 "mentioned": run.mentioned if run else None,
@@ -320,8 +328,41 @@ async def latest_query_set(
                 select(AiVisibilitySource).where(AiVisibilitySource.run_id.in_(run_ids))
             )
         ).scalars().all()
+        name_text = str(snapshot.get("name") or "")
+        locality_text = " ".join(
+            str(snapshot.get(key) or "")
+            for key in ("locality", "address", "service_area")
+        )
+        generic = {"company", "branch", "business", "location", "store", "shop", "office"}
+        name_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9\u0600-\u06ff]{4,}", name_text.casefold())
+            if token not in generic
+        }
+        locality_tokens = set(
+            re.findall(r"[a-z0-9\u0600-\u06ff]{4,}", locality_text.casefold())
+        )
+        branch_tokens = (name_tokens - locality_tokens) or name_tokens
         for row in source_rows:
             key = row.canonical_url or row.url
+            parts = urlsplit(key)
+            if (
+                not row.excerpt
+                or row.fetch_error is not None
+                or parts.scheme not in {"http", "https"}
+                or not parts.hostname
+                or key == "about:blank"
+            ):
+                continue
+            host = parts.hostname.casefold().removeprefix("www.")
+            is_owned = any(
+                host == domain or host.endswith(f".{domain}")
+                for domain in owned_hosts
+            )
+            if not is_owned and branch_tokens:
+                text = f"{row.title or ''} {row.snippet or ''} {row.excerpt or ''}".casefold()
+                if not any(token in text for token in branch_tokens):
+                    continue
             unique_sources.setdefault(key, row.url)
     independent = 0
     owned = 0

@@ -261,6 +261,18 @@ async def test_load_branch_facts_adds_workspace_services_products_and_customer_v
     assert "Private review text" not in serialized
 
 
+def test_scrub_question_redacts_partial_names_and_handles():
+    assert profile_module._scrub_question(
+        "Can Jane email jane@example.com?", reviewer_name="Jane Doe"
+    ) == "Can [customer] email [email]?"
+    assert profile_module._scrub_question(
+        "Can @jane help Sayvors?", protected_terms={"sayvors"}
+    ) == "Can [customer] help Sayvors?"
+    assert profile_module._scrub_question(
+        "Does Sayvors deliver?", protected_terms={"sayvors"}
+    ) == "Does Sayvors deliver?"
+
+
 @pytest.mark.asyncio
 async def test_customer_voice_scrubs_pii_and_known_reviewer_name(db, user_id, channel_id):
     from datetime import date

@@ -157,6 +157,7 @@ export type AiVisibilityQuerySet = {
   id: string;
   channel_id: string;
   version: number;
+  adaptive_depth?: number;
   parent_query_set_id: string | null;
   status: string;
   phase: string | null;
@@ -188,6 +189,7 @@ export type AiVisibilityGeneratedQuestion = {
   business_relevance_score: number;
   research_priority: string;
   origin: string;
+  carried_from_question_id?: string | null;
   status: string;
   run_id: string | null;
   mentioned: boolean | null;

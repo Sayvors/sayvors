@@ -177,6 +177,15 @@ class AiVisibilityQuestion(Base):
             "tenant_id",
             "channel_id",
         ),
+        Index(
+            "uq_ai_visibility_question_canonical",
+            "tenant_id",
+            "channel_id",
+            "normalized_question_hash",
+            unique=True,
+            postgresql_where=text("origin <> 'resume'"),
+            sqlite_where=text("origin <> 'resume'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(
