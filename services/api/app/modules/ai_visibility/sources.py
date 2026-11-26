@@ -111,6 +111,18 @@ async def fetch_source(
         )
         if content_type not in ALLOWED_CONTENT_TYPES:
             raise ValueError(f"unsupported_content_type:{content_type}")
+        description = ""
+        try:
+            metadata = trafilatura.extract_metadata(body)
+            if metadata:
+                if metadata.title:
+                    row.title = metadata.title.strip()[:500]
+                description = (metadata.description or "").strip()[:2000]
+                if description:
+                    row.snippet = description
+        except Exception:
+            # Metadata is an enrichment, not a reason to discard readable text.
+            description = ""
         text = trafilatura.extract(
             body,
             output_format="txt",
@@ -121,6 +133,8 @@ async def fetch_source(
         if not text:
             raise ValueError("empty_extracted_text")
         excerpt = text.strip()[:MAX_SOURCE_CHARS]
+        if description and description not in excerpt:
+            excerpt = f"{description}\n\n{excerpt}"[:MAX_SOURCE_CHARS]
         row.excerpt = excerpt
         row.content_hash = hashlib.sha256(excerpt.encode("utf-8")).hexdigest()
         row.http_status = 200

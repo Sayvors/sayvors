@@ -112,6 +112,66 @@ def _source_payload(rows) -> list[dict]:
     ]
 
 
+def _owned_search_results(branch: dict) -> list[search.SearchResult]:
+    """Known public branch URLs are always worth reading.
+
+    Search indexes can be sparse or geo-blind; the branch's own website and
+    Maps listing are still direct public evidence and must not be lost just
+    because no search provider indexed them.
+    """
+    rows: list[search.SearchResult] = []
+    seen: set[str] = set()
+    for key, title in (("website", "Branch website"), ("maps_url", "Google Maps")):
+        url = str(branch.get(key) or "").strip()
+        if not url or url == "about:blank":
+            continue
+        canonical = search.canonical_url(url)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        rows.append(search.SearchResult(url=canonical, title=title, snippet=""))
+    return rows
+
+
+def _merge_candidates(
+    owned: list[search.SearchResult],
+    relevant: list[search.SearchResult],
+    *,
+    max_results: int = 20,
+) -> list[search.SearchResult]:
+    """Put known owned URLs first, then only brand-relevant search hits."""
+    out: list[search.SearchResult] = []
+    seen: set[str] = set()
+    for row in owned + relevant:
+        key = search.canonical_url(row.url)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+        if len(out) >= max_results:
+            break
+    return out
+
+
+def _is_owned_url(url: str, branch: dict) -> bool:
+    """Classify owned evidence by its actual host, never by search snippets."""
+    host = (urlsplit(url).hostname or "").casefold().removeprefix("www.")
+    if not host:
+        return False
+    owned_hosts = set()
+    for key in ("website", "maps_url"):
+        value = str(branch.get(key) or "")
+        candidate = value if "//" in value else f"https://{value}"
+        owned_hosts.add(
+            (urlsplit(candidate).hostname or "").casefold().removeprefix("www.")
+        )
+    return any(
+        host == domain or host.endswith(f".{domain}")
+        for domain in owned_hosts
+        if domain
+    )
+
+
 GENERIC_BRANCH_WORDS = {
     "company",
     "branch",
@@ -252,9 +312,17 @@ async def _set_terminal(
 
 
 async def _owned_evidence_fallback(
-    db: AsyncSession, run: AiVisibilityRun, branch: dict
+    db: AsyncSession,
+    run: AiVisibilityRun,
+    branch: dict,
+    fetched_owned: list[AiVisibilitySource] | None = None,
 ):
-    """Build a truthful brief when search finds no third-party coverage."""
+    """Build a truthful brief when search finds no third-party coverage.
+
+    Fetched owned pages are kept as the actual evidence (never replaced with
+    a synthetic address sentence), so the owner sees what their own public
+    website says instead of a tool that only echoes the location record.
+    """
     name = str(branch.get("name") or run.prompt_snapshot)
     # Abbreviation dots ("Dist.") would split the templated answer into an
     # uncited sentence and trip our own citation validator; flatten them and
@@ -277,46 +345,98 @@ async def _owned_evidence_fallback(
         "Because AI assistants rely on public web sources, they currently have no "
         "third-party evidence to cite or recommend this branch."
     )
-    facts = f"{listing} {finding} {impact}"
-    await db.execute(
-        delete(AiVisibilitySource).where(AiVisibilitySource.run_id == run.id)
+
+    owned_rows = list(fetched_owned or [])
+    if owned_rows:
+        # Keep only the actual owned evidence in the final source list; the
+        # irrelevant search snapshots that led us here are not citations.
+        await db.execute(
+            delete(AiVisibilitySource).where(
+                AiVisibilitySource.run_id == run.id,
+                AiVisibilitySource.id.not_in([row.id for row in owned_rows]),
+            )
+        )
+        for index, row in enumerate(owned_rows):
+            row.position = index
+        await db.commit()
+    else:
+        facts = f"{listing} {finding} {impact}"
+        await db.execute(
+            delete(AiVisibilitySource).where(AiVisibilitySource.run_id == run.id)
+        )
+        owned_rows = [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=0,
+                url=website or maps_url or "about:blank",
+                canonical_url=website or maps_url or "about:blank",
+                title=f"{name} (owned profile)",
+                excerpt=facts,
+            ),
+            AiVisibilitySource(
+                run_id=run.id,
+                position=1,
+                url=maps_url or website or "about:blank",
+                canonical_url=maps_url or website or "about:blank",
+                title=f"{name} on Google Maps",
+                excerpt=facts,
+            ),
+        ]
+        db.add_all(owned_rows)
+        await db.commit()
+
+    website_row = next(
+        (
+            row
+            for row in owned_rows
+            if row.url and row.url != "about:blank" and _is_owned_url(row.url, branch)
+        ),
+        None,
     )
-    rows = [
-        AiVisibilitySource(
-            run_id=run.id,
-            position=0,
-            url=website or maps_url or "about:blank",
-            canonical_url=website or maps_url or "about:blank",
-            title=f"{name} (owned profile)",
-            excerpt=facts,
-        ),
-        AiVisibilitySource(
-            run_id=run.id,
-            position=1,
-            url=maps_url or website or "about:blank",
-            canonical_url=maps_url or website or "about:blank",
-            title=f"{name} on Google Maps",
-            excerpt=facts,
-        ),
-    ]
-    db.add_all(rows)
-    await db.commit()
-    payload = research.ResearchPayload(
-        answer=f"{finding.rstrip('.')} [S1]. {impact.rstrip('.')} [S2]",
-        claims=[
+    website_excerpt = (website_row.excerpt or "").strip() if website_row else ""
+    summary_source = (website_row.snippet or website_excerpt).strip() if website_row else ""
+    claims: list[research.ResearchClaim] = []
+    if website_excerpt and listing.rstrip(".") in website_excerpt:
+        claims.append(
             research.ResearchClaim(
                 claim=listing.rstrip("."),
-                quote=listing,
-                source_ids=["S1", "S2"],
-            ),
+                quote=listing.rstrip("."),
+                source_ids=[f"S{website_row.position + 1}"],
+            )
+        )
+    if website_excerpt:
+        # One clean, bounded sentence from the real fetched page; no model
+        # paraphrase, so the claim/quote remains verifiable against the
+        # immutable snapshot and sentence splitting cannot trip on dots.
+        summary = re.split(r"[.!?。！？]\s|\n", summary_source, maxsplit=1)[0].strip()
+        summary = re.sub(r"https?://\S+", "", summary).strip()
+        summary = " ".join(summary.split())[:400].rstrip(". ")
+        if summary:
+            label = f"S{website_row.position + 1}"
+            claims.append(
+                research.ResearchClaim(
+                    claim=summary,
+                    quote=summary,
+                    source_ids=[label],
+                )
+            )
+            payload = research.ResearchPayload(
+                answer=f"{summary} [{label}]", claims=claims
+            )
+            return owned_rows, payload
+    if not claims:
+        claims.append(
             research.ResearchClaim(
-                claim=finding.rstrip("."),
-                quote=finding,
-                source_ids=["S1", "S2"],
-            ),
-        ],
+                claim=listing.rstrip("."),
+                quote=listing.rstrip("."),
+                source_ids=[f"S{row.position + 1}" for row in owned_rows],
+            )
+        )
+    payload = research.ResearchPayload(
+        answer=f"{listing.rstrip('.')} [S{owned_rows[0].position + 1}]",
+        claims=claims,
     )
-    return rows, payload
+    return owned_rows, payload
 
 
 def _finish(run: AiVisibilityRun, started: float, status: str) -> dict:
@@ -430,6 +550,20 @@ async def handle_research(job, db: AsyncSession) -> dict:
                     distinctive=distinctive,
                     providers=providers,
                 )
+            search_results = list(results)
+            # Never waste the fetch budget on pages that do not mention the
+            # branch. Search engines fill empty indexes with generic filler;
+            # known owned URLs are kept separately and fetched first.
+            relevant_results = [
+                row
+                for row in search_results
+                if not distinctive
+                or search._row_matches_tokens(row, distinctive)
+            ]
+            owned_candidates = _owned_search_results(branch)
+            results = _merge_candidates(
+                owned_candidates, relevant_results, max_results=20
+            )
             await ensure_active()
             await _status(db, run, "fetching")
             snapshots, read_stats = await sources.fetch_sources(
@@ -450,6 +584,9 @@ async def handle_research(job, db: AsyncSession) -> dict:
                 or search.BING_PROVIDER_LABEL,
                 "query": " | ".join(queries),
                 "result_count": len(results),
+                "search_candidate_count": len(search_results),
+                "relevant_candidate_count": len(relevant_results),
+                "owned_candidate_count": len(owned_candidates),
                 "fetched_count": len(snapshots),
                 "depth": run.research_depth or "quick",
             }
@@ -466,7 +603,11 @@ async def handle_research(job, db: AsyncSession) -> dict:
                 ),
             }
         usable = [row for row in snapshots if row.excerpt]
-        if not _sources_are_relevant(usable, branch):
+        owned_usable = [row for row in usable if _is_owned_url(row.url, branch)]
+        independent_usable = [
+            row for row in usable if not _is_owned_url(row.url, branch)
+        ]
+        if not _sources_are_relevant(independent_usable, branch):
             query = str((coverage.get("search") or {}).get("query") or "").split(" | ")[0]
             try:
                 coverage["platforms"] = await search.discover_public_profiles(
@@ -485,7 +626,9 @@ async def handle_research(job, db: AsyncSession) -> dict:
                 1 for p in platforms if p.get("status") == "found"
             )
             coverage["metrics"] = metrics
-            owned_rows, payload = await _owned_evidence_fallback(db, run, branch)
+            owned_rows, payload = await _owned_evidence_fallback(
+                db, run, branch, owned_usable
+            )
             source_payload = _source_payload(owned_rows)
             payload = validation.validate(payload, source_payload, branch)
             run.status = "insufficient_evidence"

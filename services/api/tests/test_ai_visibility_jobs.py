@@ -80,8 +80,16 @@ async def test_job_completes_with_validated_brief(
 
     async def _search(_tenant, _query, **_kwargs):
         return [
-            SimpleNamespace(url="https://a.example", title="A", snippet=""),
-            SimpleNamespace(url="https://b.example", title="B", snippet=""),
+            SimpleNamespace(
+                url="https://a.example",
+                title="Acme Coffee review",
+                snippet="Acme Coffee is recommended.",
+            ),
+            SimpleNamespace(
+                url="https://b.example",
+                title="Acme Coffee menu",
+                snippet="Acme Coffee serves fresh coffee.",
+            ),
         ]
 
     async def _fetch(_db, run_id, rows, **_kwargs):
@@ -148,10 +156,10 @@ async def test_job_completes_with_validated_brief(
     assert run.claims_json[0]["status"] == "supported"
     assert run.actions_json
     metrics = run.evidence_coverage["metrics"]
-    assert metrics["candidates_found"] == 2
+    assert metrics["candidates_found"] == 3
     assert metrics["pages_read"] == 2
     assert metrics["links_found"] == 17
-    assert metrics["domains_found"] == 2
+    assert metrics["domains_found"] == 3
     assert metrics["brand_mentions"] == 2
 
 
@@ -571,6 +579,76 @@ async def test_owned_fallback_survives_abbreviation_dots(
     assert result["status"] == "insufficient_evidence", run.error
     assert "[S1]" in (run.answer_text or "")
     assert "Dist" in run.answer_text
+
+
+@pytest.mark.asyncio
+async def test_job_reads_owned_website_and_discards_search_filler(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    seen_candidates: list[str] = []
+
+    async def _search(_tenant, _query, **_kwargs):
+        return [
+            SimpleNamespace(
+                url="https://translate.google.com/?hl=ar",
+                title="Google Translate",
+                snippet="",
+            )
+        ]
+
+    async def _fetch(_db, run_id, rows, **_kwargs):
+        seen_candidates.extend(row.url for row in rows)
+        fetched = [
+            AiVisibilitySource(
+                id="owned-web",
+                run_id=run_id,
+                position=0,
+                url="https://sayvors.com/",
+                canonical_url="https://sayvors.com/",
+                title="Sayvors website",
+                snippet="Sayvors automatically replies to Google reviews in Arabic and English.",
+                excerpt="Sayvors automatically replies to Google reviews in Arabic and English. More details.",
+            ),
+            AiVisibilitySource(
+                id="owned-maps",
+                run_id=run_id,
+                position=1,
+                url="https://maps.google.com/maps?cid=123",
+                canonical_url="https://maps.google.com/maps?cid=123",
+                title="Sayvors on Google Maps",
+                excerpt="Sayvors Company Branch-Makkah is located in Makkah.",
+            ),
+        ]
+        return fetched, _read_stats(fetched, links_found=12)
+
+    async def _facts(*_args):
+        return {
+            "name": "Sayvors Company Branch-Makkah",
+            "address": "Azziziya, Makkah, 11432",
+            "website": "https://sayvors.com",
+            "maps_url": "https://maps.google.com/maps?cid=123",
+        }
+
+    async def _profiles(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _search)
+    monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+    monkeypatch.setattr(jobs.search, "discover_public_profiles", _profiles)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "insufficient_evidence", run.error
+    assert seen_candidates == [
+        "https://sayvors.com/",
+        "https://maps.google.com/maps?cid=123",
+    ]
+    assert "Sayvors automatically replies to Google reviews" in run.answer_text
+    assert run.source_count == 2
+    assert run.evidence_coverage["third_party_source_count"] == 0
+    assert run.evidence_coverage["owned_source_count"] == 2
 
 
 @pytest.mark.asyncio
