@@ -308,5 +308,5 @@ Expected: PASS. Commit `feat(ai-visibility): add business industry taxonomy`.
 - Background generation/finalizer/adaptive versions: `14c44e26`, `4e5406ac`.
 - Start/latest API: `9df34b46`.
 - Non-blocking aggregate UI: `3d793dc1`.
-- Verification: full backend suite `3170 passed, 4 skipped` (one unrelated auth test flaked under xdist and passed in isolation); focused review-hardening suite `219 passed`; frontend AI Visibility/API tests `28 passed`; TypeScript and ESLint clean; web production build clean; migration round trips clean; mocked Playwright desktop/mobile/Arabic RTL with axe and keyboard checks passed.
+- Verification: full backend suite `3170 passed, 4 skipped` (one unrelated auth test flaked under xdist and passed in isolation); focused review-hardening suite `220 passed`; frontend AI Visibility/API tests `28 passed`; TypeScript and ESLint clean; web production build clean; migration round trips clean; mocked Playwright desktop/mobile/Arabic RTL with axe and keyboard checks passed.
 - Independent review hardening: PII scrubbing/allowlists, channel-RBAC UI jobs, lifecycle reconciliation and resume, immutable history, canonical dedup/exclusions, adaptive depth/provenance, and distinct-source aggregation.

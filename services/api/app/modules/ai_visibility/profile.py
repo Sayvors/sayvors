@@ -114,6 +114,10 @@ def _scrub_question(
     """Scrub identifiers, known reviewer names, handles, and person-name cues."""
     question = scrub_pii(value)
     protected = {term.casefold() for term in (protected_terms or set())}
+    protected.update({
+        "google", "maps", "whatsapp", "facebook", "instagram", "youtube",
+        "tiktok", "linkedin", "chatgpt", "gemini", "perplexity",
+    })
     reviewer = (reviewer_name or "").strip()
     if reviewer:
         question = re.sub(
@@ -139,6 +143,10 @@ def _scrub_question(
             "should", "has", "have", "to", "for", "from", "with", "by",
             "about", "ask", "contact", "email", "call", "what", "where",
             "when", "why", "how", "who", "which",
+        } or phrase.casefold() in {
+            "google maps", "google business", "whatsapp", "facebook",
+            "instagram", "youtube", "tiktok", "linkedin", "chatgpt",
+            "gemini", "perplexity",
         }:
             return phrase
         return phrase if phrase.casefold() in protected else "[customer]"

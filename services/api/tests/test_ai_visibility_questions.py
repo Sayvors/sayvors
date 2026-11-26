@@ -163,6 +163,20 @@ def test_relevant_customer_question_is_kept_ahead_of_templates():
     assert questions[0].service_relevance >= 90
 
 
+def test_placeholder_only_customer_question_is_not_research_intent():
+    questions = generate_questions(
+        {
+            "name": "Sayvors",
+            "categories": {"category": "Software company"},
+            "description": "Customer review automation",
+            "address": "Makkah",
+            "customer_questions": ["What is [customer]?"],
+        },
+        limit=8,
+    )
+    assert not any("[customer]" in row.question_text for row in questions)
+
+
 def test_derivational_not_offered_exclusion_is_conservative():
     questions = generate_questions(
         {

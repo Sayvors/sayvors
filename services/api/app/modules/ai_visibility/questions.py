@@ -31,6 +31,11 @@ GENERIC_SUPPORT_TERMS = {
     "verify",
 }
 GENERIC_NAME_WORDS = {"company", "branch", "business", "location", "store", "shop", "office"}
+PII_PLACEHOLDERS = {"customer", "email", "phone", "link", "number", "address"}
+PROTECTED_PLATFORM_PHRASES = {
+    "google maps", "google business", "whatsapp", "facebook", "instagram",
+    "youtube", "tiktok", "linkedin", "chatgpt", "gemini", "perplexity",
+}
 SERVICE_ALIAS_GROUPS = (
     ("finance", "financing", "financial"),
     ("deliver", "delivery", "shipping"),
@@ -130,7 +135,7 @@ def _is_unoffered(text: str, not_offered: str) -> bool:
 
 
 def _tokens(value: str) -> set[str]:
-    return set(re.findall(r"\w{3,}", normalize_text(value)))
+    return set(re.findall(r"\w{3,}", normalize_text(value))) - PII_PLACEHOLDERS
 
 
 def _roots(tokens: set[str]) -> set[str]:

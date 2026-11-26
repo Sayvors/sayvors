@@ -271,6 +271,7 @@ def test_scrub_question_redacts_partial_names_and_handles():
     assert profile_module._scrub_question(
         "Does Sayvors deliver?", protected_terms={"sayvors"}
     ) == "Does Sayvors deliver?"
+    assert profile_module._scrub_question("What is Google Maps?") == "What is Google Maps?"
 
 
 @pytest.mark.asyncio
