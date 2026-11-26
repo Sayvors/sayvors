@@ -298,6 +298,32 @@ async def test_direct_create_enforces_recent_terminal_cooldown(
 
 
 @pytest.mark.asyncio
+async def test_three_failed_attempts_do_not_lock_the_question(
+    client, db, user_id, channel_id
+):
+    prompt = await _prompt(db, user_id, channel_id)
+    old = datetime.now(timezone.utc) - timedelta(minutes=5)
+    db.add_all(
+        [
+            AiVisibilityAttempt(
+                tenant_id=user_id,
+                prompt_id=prompt.id,
+                run_id=f"failed-run-{index}",
+                attempted_at=old,
+            )
+            for index in range(3)
+        ]
+    )
+    await db.commit()
+
+    response = client.post(
+        "/api/v1/ai-visibility/runs",
+        json={"channel_id": channel_id, "prompt_id": prompt.id},
+    )
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
 async def test_direct_create_enforces_attempt_limit_even_after_history_delete(
     client, db, user_id, channel_id
 ):
@@ -311,7 +337,7 @@ async def test_direct_create_enforces_attempt_limit_even_after_history_delete(
                 run_id=f"deleted-run-{index}",
                 attempted_at=old,
             )
-            for index in range(3)
+            for index in range(service.MAX_RUN_ATTEMPTS)
         ]
     )
     db.add(
@@ -348,9 +374,9 @@ async def test_attempt_limit_counts_the_trailing_hour(
                 tenant_id=user_id,
                 prompt_id=prompt.id,
                 run_id=f"boundary-run-{index}",
-                attempted_at=now - timedelta(minutes=minutes),
+                attempted_at=now - timedelta(minutes=index % 59),
             )
-            for index, minutes in enumerate((59, 30, 2))
+            for index in range(service.MAX_RUN_ATTEMPTS)
         ]
     )
     await db.commit()
@@ -363,7 +389,7 @@ async def test_attempt_limit_counts_the_trailing_hour(
             )
         )
     ).scalars().all()
-    assert len(stored) == 3
+    assert len(stored) == service.MAX_RUN_ATTEMPTS
 
     response = client.post(
         "/api/v1/ai-visibility/runs",
@@ -431,7 +457,7 @@ async def test_retry_attempt_limit(client, db, user_id, channel_id):
             status="failed",
             completed_at=old,
         )
-        for _ in range(3)
+        for _ in range(service.MAX_RUN_ATTEMPTS)
     ])
     await db.flush()
     runs = (await db.execute(select(AiVisibilityRun))).scalars().all()
