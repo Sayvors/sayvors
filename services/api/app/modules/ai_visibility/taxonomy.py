@@ -48,6 +48,8 @@ DESCRIPTION_SIGNAL_WEIGHT = 2
 REVIEW_SIGNAL_WEIGHT = 1
 BASE_INDUSTRY_CONFIDENCE = 0.35
 CONFIDENCE_SCORE_DIVISOR = 20
+MULTI_ALIAS_CONFIDENCE_BONUS = 0.75
+MAX_MULTI_ALIAS_BONUSES = 2
 MAX_INDUSTRY_CONFIDENCE = 0.95
 LOW_INDUSTRY_CONFIDENCE = 0.6
 UNKNOWN_INDUSTRY_CONFIDENCE = 0.2
@@ -511,7 +513,11 @@ def classify_industry(profile: dict) -> IndustryMatch:
         ("services", DESCRIPTION_SIGNAL_WEIGHT),
         ("products", DESCRIPTION_SIGNAL_WEIGHT),
         ("website_title", DESCRIPTION_SIGNAL_WEIGHT),
+        ("offering_text", DESCRIPTION_SIGNAL_WEIGHT),
+        ("business_description", DESCRIPTION_SIGNAL_WEIGHT),
         ("review_themes", REVIEW_SIGNAL_WEIGHT),
+        ("customer_questions", REVIEW_SIGNAL_WEIGHT),
+        ("customer_intents", REVIEW_SIGNAL_WEIGHT),
     )
     scores: dict[str, float] = {}
     signals: dict[str, list[str]] = {}
@@ -520,7 +526,10 @@ def classify_industry(profile: dict) -> IndustryMatch:
         for industry, aliases in INDUSTRY_ALIASES.items():
             matched = [alias for alias in aliases if alias in text]
             if matched:
-                scores[industry] = scores.get(industry, 0.0) + weight
+                bonus = min(
+                    len(matched) - 1, MAX_MULTI_ALIAS_BONUSES
+                ) * MULTI_ALIAS_CONFIDENCE_BONUS
+                scores[industry] = scores.get(industry, 0.0) + weight + bonus
                 signals.setdefault(industry, []).extend(
                     f"{field}:{alias}" for alias in matched
                 )
@@ -534,7 +543,13 @@ def classify_industry(profile: dict) -> IndustryMatch:
             ("industry_unclear",),
             service_text=" ".join(
                 _field_text(profile, field)
-                for field in ("description", "services", "products")
+                for field in (
+                    "description",
+                    "services",
+                    "products",
+                    "offering_text",
+                    "business_description",
+                )
             ).casefold(),
         )
     industry = max(scores, key=scores.get)
@@ -551,7 +566,13 @@ def classify_industry(profile: dict) -> IndustryMatch:
         ("industry_confidence_low",) if confidence < LOW_INDUSTRY_CONFIDENCE else (),
         service_text=" ".join(
             _field_text(profile, field)
-            for field in ("description", "services", "products")
+            for field in (
+                "description",
+                "services",
+                "products",
+                "offering_text",
+                "business_description",
+            )
         ).casefold(),
     )
 

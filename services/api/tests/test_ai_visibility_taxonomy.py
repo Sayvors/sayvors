@@ -67,6 +67,17 @@ def test_low_information_profile_is_marked_uncertain():
     assert "industry_unclear" in match.uncertainties
 
 
+def test_workspace_offering_text_can_classify_a_branch_without_category():
+    match = classify_industry(
+        {
+            "name": "MenteE",
+            "offering_text": "AI research and software development for recruitment teams",
+        }
+    )
+    assert match.industry == "software_company"
+    assert match.confidence > 0.5
+
+
 def test_each_required_industry_has_its_own_customer_intents():
     cases = (
         ("school", "International School", "admissions"),
