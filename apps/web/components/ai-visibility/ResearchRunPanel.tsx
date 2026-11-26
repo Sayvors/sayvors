@@ -8,22 +8,7 @@ import { isActiveStatus } from "@/lib/ai-visibility-metrics";
 import { queryKeys } from "@/lib/query-keys";
 import { researchErrorMessage } from "@/lib/ai-visibility-errors";
 import DecisionBrief from "./DecisionBrief";
-import ResearchActivity from "./ResearchActivity";
 import ResearchFacts from "./ResearchFacts";
-
-const PROGRESS: Record<string, number> = {
-  queued: 8,
-  searching: 25,
-  fetching: 40,
-  reading: 58,
-  validating: 74,
-  writing: 88,
-  completed: 100,
-};
-
-function progressFor(status: string): number {
-  return PROGRESS[status] ?? 10;
-}
 
 export default function ResearchRunPanel({
   runId,
@@ -32,9 +17,10 @@ export default function ResearchRunPanel({
 }: {
   runId: string | null;
   copy: Dict["aiVisibility"];
-  onRetry: () => void;
+  onRetry: (runId: string) => void;
 }) {
   const [actionError, setActionError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const query = useQuery({
     queryKey: queryKeys.aiVisibility.detail(runId ?? "none"),
     queryFn: () => fetchRun(runId!),
@@ -94,67 +80,41 @@ export default function ResearchRunPanel({
           <span className="ai-status-dot" data-tone={tone} />
           <div>
             <p className="text-[12px] font-bold text-[var(--ai-ink)]">{stage}</p>
-            <p className="mt-0.5 font-mono text-[10px] text-[var(--ai-muted)]">
-              {Number(detail.evidence_coverage.source_count ?? 0)}{" "}
-              {copy.sources.toLowerCase()}
-              {Number(detail.evidence_coverage.owned_source_count ?? 0) > 0 &&
-              Number(detail.evidence_coverage.third_party_source_count ?? 0) === 0
-                ? ` · ${copy.ownedEvidenceOnly}`
-                : ""}
-            </p>
           </div>
         </div>
         {(detail.status === "failed" ||
           detail.status === "insufficient_evidence") && (
           <button
             type="button"
+            disabled={retrying}
             onClick={async () => {
-              setActionError(null);              try {
-                await retryRun(detail.id);
-                onRetry();
+              setActionError(null);
+              setRetrying(true);
+              try {
+                const retried = await retryRun(detail.id);
+                onRetry(retried.id);
               } catch (exc) {
                 setActionError(exc instanceof Error ? exc.message : copy.loadError);
+              } finally {
+                setRetrying(false);
               }
             }}
             className="ai-btn-primary min-h-10 px-3 text-[11px]"
             title={copy.tipRetry}
           >
-            {copy.retry}
+            {retrying ? copy.running : copy.retry}
           </button>
         )}
       </div>
       {active && (
-        <>
-          <ResearchActivity
-            status={detail.status}
-            coverage={detail.evidence_coverage}
-            copy={copy}
-          />
+        <div className="space-y-3">
           <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
-          <div className="space-y-3" role="status">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-[12px] font-semibold text-[var(--ai-ink)]">{stage}</p>
-              <span className="font-mono text-[10px] text-[var(--ai-muted)]">
-                {progressFor(detail.status)}%
-              </span>
-            </div>
-            <progress
-              value={progressFor(detail.status)}
-              max={100}
-              aria-label={stage}
-              className="h-2 w-full overflow-hidden rounded-full accent-[var(--ai-signal)]"
-            />
-            <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[9px] uppercase tracking-wide text-[var(--ai-muted)]">
-              <span>Scan public pages</span>
-              <span>Check claims</span>
-              <span>Draft brief</span>
-            </div>
-            <div className="space-y-2 pt-1">
-              <div className="ai-skeleton h-3 w-2/3" />
-              <div className="ai-skeleton h-3 w-full" />
-            </div>
-          </div>
-        </>
+          {!detail.evidence_coverage.metrics && (
+            <p role="status" className="text-[12px] text-[var(--ai-muted)]">
+              {copy.running}
+            </p>
+          )}
+        </div>
       )}
       {(actionError ||
         (detail.error && detail.status !== "insufficient_evidence")) && (
@@ -166,22 +126,10 @@ export default function ResearchRunPanel({
         <>
           <DecisionBrief detail={detail} copy={copy} />
           <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
-          <ResearchActivity
-            status={detail.status}
-            coverage={detail.evidence_coverage}
-            copy={copy}
-          />
         </>
       )}
       {!active && detail.status === "failed" && (
-        <>
-          <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
-          <ResearchActivity
-            status={detail.status}
-            coverage={detail.evidence_coverage}
-            copy={copy}
-          />
-        </>
+        <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
       )}
     </div>
   );

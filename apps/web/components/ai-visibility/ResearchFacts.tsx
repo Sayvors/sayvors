@@ -126,6 +126,16 @@ export default function ResearchFacts({
   if (cards.length === 0) return null;
   const primary = cards.filter((card) => card.primary);
   const secondary = cards.filter((card) => !card.primary);
+  const chartKeys = new Set([
+    "candidates_found",
+    "pages_read",
+    "domains_found",
+    "brand_mentions",
+    "platforms",
+  ]);
+  const chartRows = cards.filter((card) => chartKeys.has(card.key));
+  const chartMax = Math.max(1, ...chartRows.map((card) => card.raw));
+  const showChart = chartRows.some((card) => card.raw > 0);
 
   return (
     <section aria-label={copy.facts.title} className="space-y-3">
@@ -178,6 +188,31 @@ export default function ResearchFacts({
           </dl>
         )}
       </div>
+      {showChart && (
+        <div className="border-t border-[var(--ai-line)] pt-3">
+          <p className="text-[11px] font-bold text-[var(--ai-ink-2)]">
+            {copy.facts.chartTitle}
+          </p>
+          <ul className="mt-3 space-y-2.5" aria-label={copy.facts.chartTitle}>
+            {chartRows.map((row) => (
+              <li key={row.key}>
+                <div className="flex items-center justify-between gap-3 text-[10px]">
+                  <span className="text-[var(--ai-muted)]">{row.label}</span>
+                  <span className="font-mono font-bold text-[var(--ai-ink-2)]">
+                    {row.value}
+                  </span>
+                </div>
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--ai-sunken)]">
+                  <div
+                    className="h-full rounded-full bg-[var(--ai-accent)]"
+                    style={{ width: `${(row.raw / chartMax) * 100}%` }}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

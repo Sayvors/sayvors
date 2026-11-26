@@ -153,6 +153,7 @@ const en = {
     activityNow: "in progress",
     facts: {
       title: "Research facts",
+      chartTitle: "Coverage at a glance",
       pagesFound: "Web pages found",
       pagesFoundCaption: "unique public pages considered for this branch",
       pagesRead: "Pages read",

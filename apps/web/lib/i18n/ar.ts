@@ -155,6 +155,7 @@ const ar: Dict = {
     activityNow: "قيد التنفيذ",
     facts: {
       title: "حقائق البحث",
+      chartTitle: "نظرة سريعة على التغطية",
       pagesFound: "صفحات ويب تم العثور عليها",
       pagesFoundCaption: "صفحات عامة مميزة تمت مراجعتها لهذا الفرع",
       pagesRead: "صفحات تمت قراءتها",

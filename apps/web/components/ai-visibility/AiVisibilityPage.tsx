@@ -209,7 +209,10 @@ export default function AiVisibilityPage() {
           <ResearchRunPanel
             runId={selectedRunId}
             copy={copy}
-            onRetry={invalidate}
+            onRetry={(id) => {
+              setSelectedRunId(id);
+              invalidate();
+            }}
           />
         </div>
       </section>

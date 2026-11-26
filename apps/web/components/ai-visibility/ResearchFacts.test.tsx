@@ -22,12 +22,13 @@ describe("ResearchFacts", () => {
         }}
       />,
     );
-    expect(screen.getByText("1,234")).toBeInTheDocument();
-    expect(screen.getByText("87")).toBeInTheDocument();
-    expect(screen.getByText("4,210")).toBeInTheDocument();
-    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getAllByText("1,234").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("87").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("4,210").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("2").length).toBeGreaterThan(0);
     expect(screen.getByText(en.aiVisibility.facts.linksFound)).toBeInTheDocument();
     expect(screen.getByText("failed to open: 1")).toBeInTheDocument();
+    expect(screen.getByLabelText(en.aiVisibility.facts.chartTitle)).toBeInTheDocument();
   });
 
   it("renders nothing for runs stored before counters existed", () => {
