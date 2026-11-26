@@ -20,6 +20,7 @@ vi.mock("@/components/analytics/Controls", () => ({
 vi.mock("@tanstack/react-query", () => ({
   useQuery: vi.fn(),
   useQueryClient: () => query,
+  keepPreviousData: vi.fn(),
 }));
 vi.mock("@/lib/i18n/I18nProvider", async () => {
   const actual = await vi.importActual<typeof import("@/lib/i18n/I18nProvider")>(
@@ -110,6 +111,18 @@ describe("AiVisibilityPage", () => {
       "true",
     );
     expect(screen.queryByText("100.0%")).not.toBeInTheDocument();
+  });
+
+  it("shows a grounded research guide and keeps query data fresh", () => {
+    channels.value = [{ id: "branch-1", label: "Acme Coffee" }];
+    render(<AiVisibilityPage />);
+
+    expect(screen.getByText("How grounded research works")).toBeInTheDocument();
+    expect(screen.getByLabelText("Branch")).toHaveAttribute("title");
+    const overviewCall = vi
+      .mocked(useQuery)
+      .mock.calls.find(([options]) => options.queryKey[1] === "overview");
+    expect(overviewCall?.[0].staleTime).toBe(30_000);
   });
 
   it("runs the selected prompt for the selected branch", async () => {

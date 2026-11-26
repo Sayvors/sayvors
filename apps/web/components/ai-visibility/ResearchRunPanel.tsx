@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { Dict } from "@/lib/i18n/en";
 import { fetchRun, retryRun } from "@/lib/api-ai-visibility";
 import { isActiveStatus } from "@/lib/ai-visibility-metrics";
@@ -22,6 +22,10 @@ export default function ResearchRunPanel({
     queryKey: queryKeys.aiVisibility.detail(runId ?? "none"),
     queryFn: () => fetchRun(runId!),
     enabled: !!runId,
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
     refetchInterval: (item) => {
       const status = item.state.data?.status;
       return status && isActiveStatus(status) ? 3000 : false;
@@ -83,8 +87,7 @@ export default function ResearchRunPanel({
           <button
             type="button"
             onClick={async () => {
-              setActionError(null);
-              try {
+              setActionError(null);              try {
                 await retryRun(detail.id);
                 onRetry();
               } catch (exc) {
@@ -92,6 +95,7 @@ export default function ResearchRunPanel({
               }
             }}
             className="ai-btn-primary min-h-10 px-3 text-[11px]"
+            title={copy.tipRetry}
           >
             {copy.retry}
           </button>

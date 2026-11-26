@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import Modal from "@/components/dashboard/media/Modal";
 import {
   deleteRun,
@@ -16,6 +16,7 @@ import { queryKeys } from "@/lib/query-keys";
 type Copy = {
   history: string;
   historyEyebrow: string;
+  tipRetry: string;
   noRuns: string;
   retry: string;
   deleteRun: string;
@@ -37,12 +38,14 @@ export default function RunHistory({
   copy,
   onSelect,
   onChanged,
+  loading = false,
 }: {
   channelId: string;
   selectedId: string | null;
   copy: Copy;
   onSelect: (id: string) => void;
   onChanged: () => void;
+  loading?: boolean;
 }) {
   const [status, setStatus] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -56,6 +59,10 @@ export default function RunHistory({
     queryKey: queryKeys.aiVisibility.runs(channelId, status, "", 50, 0),
     queryFn: () =>
       fetchRuns(channelId, { status: status || undefined, limit: 50 }),
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
 
   const compare = async (run: AiVisibilityRunListItem) => {
@@ -92,7 +99,18 @@ export default function RunHistory({
     }
   };
 
-  if (query.isPending) return <p role="status">{copy.loading}</p>;
+  if (query.isPending || loading) {
+    return (
+      <section className="ai-panel p-5 sm:p-6" aria-label={copy.history}>
+        <p className="ai-eyebrow">{copy.historyEyebrow}</p>
+        <h2 className="mt-1 text-[18px] font-bold">{copy.history}</h2>
+        <div role="status" aria-label={copy.loading} className="mt-4 space-y-2">
+          <div className="ai-skeleton h-16 w-full" />
+          <div className="ai-skeleton h-16 w-full" />
+        </div>
+      </section>
+    );
+  }
   if (query.isError) {
     return (
       <div role="alert">
@@ -163,8 +181,7 @@ export default function RunHistory({
                   type="button"
                   onClick={async () => {
                     try {
-                      await retryRun(run.id);
-                      await queryClient.invalidateQueries({
+                      await retryRun(run.id);                      await queryClient.invalidateQueries({
                         queryKey: queryKeys.aiVisibility.all(),
                       });
                       onChanged();
@@ -173,6 +190,7 @@ export default function RunHistory({
                     }
                   }}
                   className="min-h-8 rounded-md px-2 text-[var(--ai-accent)] hover:bg-[var(--ai-surface)]"
+                  title={copy.tipRetry}
                 >
                   {copy.retry}
                 </button>

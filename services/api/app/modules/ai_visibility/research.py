@@ -118,11 +118,24 @@ def _decode_json_object(content: str) -> dict:
     try:
         return json.loads(cleaned)
     except (TypeError, ValueError):
-        start = cleaned.find("{")
-        if start < 0:
-            raise
-        # raw_decode ignores trailing commentary after the object.
-        return json.JSONDecoder().raw_decode(cleaned[start:])[0]
+        decoder = json.JSONDecoder()
+        # Try each object opening: model prefaces often contain illustrative
+        # braces that are not part of the payload. raw_decode ignores trailing
+        # prose after the object.
+        for index, character in enumerate(cleaned):
+            if character != "{":
+                continue
+            try:
+                value = decoder.raw_decode(cleaned[index:])[0]
+            except ValueError:
+                continue
+            if isinstance(value, dict):
+                return value
+            if isinstance(value, list):
+                for row in value:
+                    if isinstance(row, dict):
+                        return row
+        raise
 
 
 def parse_response(content: str, sources: list[dict]) -> ResearchPayload:

@@ -125,6 +125,24 @@ def test_parse_response_recovers_json_wrapped_in_prose():
     assert parsed.answer == payload["answer"]
 
 
+def test_parse_response_recovers_json_after_prose_with_braces():
+    payload = {
+        "answer": "Acme is nearby [S1].",
+        "claims": [],
+        "mentioned": True,
+        "cited": True,
+        "recommended": False,
+        "incorrect": False,
+        "competitors": [],
+        "suggested_actions": [],
+    }
+    parsed = research.parse_response(
+        f"Use the format {{answer, claims}}. {json.dumps(payload)}",
+        [_source("src-1", "Acme is nearby.")],
+    )
+    assert parsed.answer == payload["answer"]
+
+
 def test_response_collections_are_hard_bounded():
     claim = {
         "claim": "Acme is nearby",

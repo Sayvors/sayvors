@@ -20,6 +20,7 @@ type Copy = {
   editPrompt: string;
   archivePrompt: string;
   deletePrompt: string;
+  loading: string;
   titleLabel: string;
   promptLabel: string;
   intentLabel: string;
@@ -50,6 +51,7 @@ type Props = {
     body: Partial<Pick<PromptItem, "title" | "prompt_text" | "intent" | "is_active">>,
   ) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  loading?: boolean;
 };
 
 export default function PromptLibrary({
@@ -62,6 +64,7 @@ export default function PromptLibrary({
   onCreate,
   onUpdate,
   onDelete,
+  loading = false,
 }: Props) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<PromptItem | null>(null);
@@ -138,7 +141,13 @@ export default function PromptLibrary({
         placeholder={copy.searchPrompts}
       />
       <div className="mt-3 space-y-2">
-        {visible.map((row) => (
+        {loading && (
+          <div role="status" aria-label={copy.loading} className="space-y-2">
+            <div className="ai-skeleton h-16 w-full" />
+            <div className="ai-skeleton h-16 w-full" />
+          </div>
+        )}
+        {!loading && visible.map((row) => (
           <div
             key={row.id}
             className={`rounded-[var(--ai-radius-control)] border p-3 transition-colors ${
@@ -189,7 +198,7 @@ export default function PromptLibrary({
             </div>
           </div>
         ))}
-        {visible.length === 0 && (
+        {!loading && visible.length === 0 && (
           <p className="text-[12px] leading-5 text-[var(--ai-ink-2)]">{copy.noPrompts}</p>
         )}
       </div>

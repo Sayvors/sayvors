@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useGoogleChannels } from "@/components/analytics/Controls";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { queryKeys } from "@/lib/query-keys";
@@ -20,6 +20,9 @@ import AiVisibilitySummary from "./AiVisibilitySummary";
 import PromptLibrary from "./PromptLibrary";
 import ResearchRunPanel from "./ResearchRunPanel";
 import RunHistory from "./RunHistory";
+
+const QUERY_STALE_TIME = 30_000;
+const QUERY_GC_TIME = 5 * 60_000;
 
 export default function AiVisibilityPage() {
   const { t } = useI18n();
@@ -40,16 +43,28 @@ export default function AiVisibilityPage() {
     queryKey: queryKeys.aiVisibility.overview(channelId ?? "none", days),
     queryFn: () => fetchOverview(channelId!, days),
     enabled: !!channelId,
+    staleTime: QUERY_STALE_TIME,
+    gcTime: QUERY_GC_TIME,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
   const prompts = useQuery({
     queryKey: queryKeys.aiVisibility.prompts(channelId ?? "none", false),
     queryFn: () => fetchPrompts(channelId!),
     enabled: !!channelId,
+    staleTime: QUERY_STALE_TIME,
+    gcTime: QUERY_GC_TIME,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
   });
   const runs = useQuery({
     queryKey: queryKeys.aiVisibility.runs(channelId ?? "none", "", "", 20, 0),
     queryFn: () => fetchRuns(channelId!, { limit: 20 }),
     enabled: !!channelId,
+    staleTime: QUERY_STALE_TIME,
+    gcTime: QUERY_GC_TIME,
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
     refetchInterval: (query) =>
       query.state.data?.items.some((run) => isActiveStatus(run.status))
         ? 3000
@@ -142,6 +157,7 @@ export default function AiVisibilityPage() {
         <div className="ai-panel flex flex-wrap items-center gap-2 p-3">
           <select
             aria-label={copy.branch}
+            title={copy.tipBranch}
             value={channelId}
             onChange={(event) => setChannelId(event.target.value)}
             className="ai-control min-w-40 flex-1 px-3 text-[12px] font-semibold"
@@ -154,6 +170,7 @@ export default function AiVisibilityPage() {
           </select>
           <select
             aria-label={copy.range}
+            title={copy.tipRange}
             value={days}
             onChange={(event) => setDays(Number(event.target.value))}
             className="ai-control min-w-28 px-3 text-[12px] font-semibold"
@@ -166,6 +183,7 @@ export default function AiVisibilityPage() {
           <button
             type="button"
             onClick={() => void runAll()}
+            title={copy.tipRunAll}
             disabled={!prompts.data?.items.some((row) => row.is_active)}
             className="ai-btn-primary w-full px-4 text-[12px] sm:w-auto"
           >
@@ -194,6 +212,30 @@ export default function AiVisibilityPage() {
         copy={copy}
       />
 
+      <section className="ai-panel p-4 sm:p-5" aria-label={copy.howItWorks}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="ai-status-dot" data-tone="active" />
+            <h2 className="text-[13px] font-bold text-[var(--ai-ink)]">{copy.howItWorks}</h2>
+          </div>
+          <p className="font-mono text-[10px] uppercase text-[var(--ai-muted)]">{copy.stepsCount}</p>
+        </div>
+        <ol className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[copy.howStep1, copy.howStep2, copy.howStep3, copy.howStep4].map((step, index) => (
+            <li
+              key={step}
+              title={step}
+              className="rounded-[var(--ai-radius-control)] border border-[var(--ai-line)] bg-[var(--ai-surface)] p-3 transition-colors hover:border-[var(--ai-accent)]"
+            >
+              <span className="font-mono text-[10px] font-bold text-[var(--ai-signal)]">
+                0{index + 1}
+              </span>
+              <p className="mt-1 text-[11px] leading-5 text-[var(--ai-ink-2)]">{step}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
       <div className="grid items-start gap-5 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)]">
         <PromptLibrary
           channelId={channelId}
@@ -202,6 +244,7 @@ export default function AiVisibilityPage() {
           suggestions={suggestions}
           selectedId={selectedPromptId}
           onSelect={setSelectedPromptId}
+          loading={prompts.isPending}
           onCreate={async (body) => {
             await createPrompt(body);
             invalidate();
@@ -239,6 +282,7 @@ export default function AiVisibilityPage() {
               <button
                 type="button"
                 onClick={() => void runPrompt(selectedPrompt)}
+                title={copy.tipRun}
                 className="ai-btn-primary shrink-0 px-4 text-[12px]"
               >
                 {copy.runResearch}
@@ -271,6 +315,7 @@ export default function AiVisibilityPage() {
         channelId={channelId}
         selectedId={selectedRunId}
         copy={copy}
+        loading={runs.isPending}
         onSelect={setSelectedRunId}
         onChanged={invalidate}
       />
