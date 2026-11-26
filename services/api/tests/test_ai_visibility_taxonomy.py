@@ -90,6 +90,7 @@ def test_publishing_recommendations_are_industry_specific():
     software = publishing_recommendations("software_company")
     hotel = publishing_recommendations("hotel")
     assert {row["platform"] for row in software} >= {"LinkedIn", "Medium", "Substack"}
+    assert {row["key"] for row in software} >= {"linkedin", "medium", "substack", "reddit"}
     assert {row["platform"] for row in hotel} >= {"Booking.com", "TripAdvisor"}
     assert all(row["setup_url"].startswith("https://") for row in software + hotel)
 

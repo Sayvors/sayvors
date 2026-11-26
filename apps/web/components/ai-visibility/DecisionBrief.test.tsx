@@ -15,16 +15,19 @@ const detail = {
     validated_claim_count: 1,
     publishing_recommendations: [
       {
+        key: "reddit",
         platform: "Reddit",
         setup_url: "https://www.reddit.com/submit",
         reason: "Share useful expertise in relevant communities.",
       },
       {
+        key: "medium",
         platform: "Medium",
         setup_url: "https://medium.com/new-story",
         reason: "Publish in-depth industry articles.",
       },
       {
+        key: "substack",
         platform: "Substack",
         setup_url: "https://substack.com/start",
         reason: "Build a recurring customer newsletter.",
@@ -108,6 +111,17 @@ const copy = {
   notFoundPublic: "No public profile found",
   unknownPublic: "Unknown",
   privateNote: "Private accounts are never accessed",
+  publishPublicly: "Publish publicly",
+  publishingPlatforms: {
+    reddit: "Reddit",
+    medium: "Medium",
+    substack: "Substack",
+  },
+  publishingReasons: {
+    reddit: "Share useful expertise in relevant communities.",
+    medium: "Publish in-depth industry articles.",
+    substack: "Build a recurring customer newsletter.",
+  },
 };
 
 describe("DecisionBrief", () => {
@@ -133,6 +147,25 @@ describe("DecisionBrief", () => {
     );
     expect(screen.getByRole("link", { name: "Medium ↗" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Substack ↗" })).toBeVisible();
+  });
+
+  it("localizes publishing recommendations for Arabic briefs", () => {
+    render(
+      <DecisionBrief
+        detail={detail as never}
+        copy={{
+          ...copy,
+          publishPublicly: "انشر علنًا",
+          publishingPlatforms: { ...copy.publishingPlatforms, reddit: "ريديت" },
+          publishingReasons: {
+            ...copy.publishingReasons,
+            reddit: "شارك خبرة مفيدة في المجتمعات ذات الصلة.",
+          },
+        } as never}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "ريديت ↗" })).toBeVisible();
+    expect(screen.getByText("شارك خبرة مفيدة في المجتمعات ذات الصلة.")).toBeVisible();
   });
 
   it("shows the source domain beside each cited website", () => {

@@ -17,15 +17,18 @@ type Copy = {
   notFoundPublic: string;
   unknownPublic: string;
   privateNote: string;
+  publishPublicly: string;
+  publishingPlatforms: Record<string, string>;
+  publishingReasons: Record<string, string>;
 };
 
 const PLATFORMS = [
-  ["Google Business Profile", "https://business.google.com/"],
-  ["Facebook Page", "https://www.facebook.com/pages/create"],
-  ["Instagram Business", "https://business.instagram.com/"],
-  ["TikTok Business", "https://www.tiktok.com/business/"],
-  ["LinkedIn Company Page", "https://www.linkedin.com/company/setup/new/"],
-  ["YouTube", "https://www.youtube.com/creators/"],
+  ["google_business", "Google Business Profile", "https://business.google.com/"],
+  ["facebook", "Facebook Page", "https://www.facebook.com/pages/create"],
+  ["instagram", "Instagram Business", "https://business.instagram.com/"],
+  ["tiktok", "TikTok Business", "https://www.tiktok.com/business/"],
+  ["linkedin", "LinkedIn Company Page", "https://www.linkedin.com/company/setup/new/"],
+  ["youtube", "YouTube", "https://www.youtube.com/creators/"],
 ] as const;
 
 export default function ResearchProvenance({
@@ -50,7 +53,7 @@ export default function ResearchProvenance({
     : [];
   const recommendations = Array.isArray(coverage.publishing_recommendations)
     ? (coverage.publishing_recommendations as Array<Record<string, unknown>>)
-    : PLATFORMS.map(([platform, setup_url]) => ({ platform, setup_url, reason: "" }));
+    : PLATFORMS.map(([key, platform, setup_url]) => ({ key, platform, setup_url, reason: "" }));
   return (
     <>
       <details className="border-y border-[var(--ai-line)] py-3">
@@ -135,7 +138,7 @@ export default function ResearchProvenance({
                           rel="noreferrer"
                           className="font-semibold text-[var(--ai-accent)] underline"
                         >
-                          Publish publicly ↗
+                          {copy.publishPublicly} ↗
                         </a>
                       ) : null}
                     </span>
@@ -159,9 +162,12 @@ export default function ResearchProvenance({
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {recommendations.map((row) => {
             const href = safeHref(String(row.setup_url ?? ""));
+            const key = String(row.key ?? "");
+            const platform = copy.publishingPlatforms[key] ?? String(row.platform ?? key);
+            const reason = copy.publishingReasons[key] ?? String(row.reason ?? "");
             return (
               <div
-                key={String(row.platform)}
+                key={platform}
                 className="rounded-[var(--ai-radius-control)] border border-[var(--ai-line)] bg-[var(--ai-sunken)] px-3 py-2"
               >
                 {href ? (
@@ -171,16 +177,16 @@ export default function ResearchProvenance({
                     rel="noreferrer"
                     className="text-[11px] font-bold text-[var(--ai-accent)] underline"
                   >
-                    {String(row.platform)} ↗
+                    {platform} ↗
                   </a>
                 ) : (
                   <span className="text-[11px] font-bold text-[var(--ai-ink)]">
-                    {String(row.platform)}
+                    {platform}
                   </span>
                 )}
-                {row.reason ? (
+                {reason ? (
                   <p className="mt-1 text-[10px] leading-4 text-[var(--ai-muted)]">
-                    {String(row.reason)}
+                    {reason}
                   </p>
                 ) : null}
               </div>

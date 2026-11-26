@@ -167,6 +167,15 @@ async def test_latest_query_set_includes_generated_questions_and_outcomes(
     )
     await db.commit()
 
+    await db.refresh(query_set)
+    query_set.generation_meta_json = {
+        key: value
+        for key, value in (query_set.generation_meta_json or {}).items()
+        if key != "publishing_recommendations"
+    }
+    db.add(query_set)
+    await db.commit()
+
     latest = client.get(f"/api/v1/ai-visibility/query-sets/latest?channel_id={channel_id}")
     assert latest.status_code == 200, latest.text
     payload = latest.json()
@@ -183,6 +192,7 @@ async def test_latest_query_set_includes_generated_questions_and_outcomes(
     assert brief.status_code == 200, brief.text
     recommendations = brief.json()["evidence_coverage"]["publishing_recommendations"]
     assert {row["platform"] for row in recommendations} >= {"Musaned", "LinkedIn"}
+    assert {row["key"] for row in recommendations} >= {"musaned", "linkedin"}
 
 
 @pytest.mark.asyncio

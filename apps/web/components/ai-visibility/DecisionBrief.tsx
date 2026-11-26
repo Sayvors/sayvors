@@ -52,6 +52,9 @@ type Copy = {
   notFoundPublic: string;
   unknownPublic: string;
   privateNote: string;
+  publishPublicly: string;
+  publishingPlatforms: Record<string, string>;
+  publishingReasons: Record<string, string>;
 };
 
 function Answer({

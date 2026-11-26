@@ -599,6 +599,7 @@ def publishing_recommendations(industry: str) -> list[dict]:
     keys = INDUSTRY_PUBLISHING.get(industry, INDUSTRY_PUBLISHING["local_services"])
     return [
         {
+            "key": key,
             "platform": PUBLISHING_CATALOG[key][0],
             "setup_url": PUBLISHING_CATALOG[key][1],
             "reason": PUBLISHING_CATALOG[key][2],

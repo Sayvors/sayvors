@@ -133,6 +133,75 @@ async def test_latest_query_set_counts_distinct_source_pages(
 
 
 @pytest.mark.asyncio
+async def test_latest_query_set_counts_null_insufficient_outcomes_in_rate_denominator(
+    db, user_id, channel_id
+):
+    query_set = AiVisibilityQuerySet(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        version=1,
+        status="completed",
+        depth="quick",
+        source_snapshot_json={"name": "Sayvors", "website": "https://sayvors.com"},
+    )
+    db.add(query_set)
+    await db.flush()
+    prompt = AiVisibilityPrompt(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        title="Insufficient evidence",
+        prompt_text="Is Sayvors licensed?",
+        normalized_prompt_hash="d" * 64,
+        intent="licensing",
+        created_by=user_id,
+    )
+    db.add(prompt)
+    await db.flush()
+    question = AiVisibilityQuestion(
+        query_set_id=query_set.id,
+        tenant_id=user_id,
+        channel_id=channel_id,
+        question_key="q001",
+        question_text=prompt.prompt_text,
+        normalized_question_hash=prompt.normalized_prompt_hash,
+        language="en",
+        customer_intent="licensing",
+        industry_relevance=90,
+        service_relevance=95,
+        business_relevance_score=92,
+        research_priority="P1",
+        prompt_id=prompt.id,
+        status="insufficient_evidence",
+        position=0,
+    )
+    db.add(question)
+    await db.flush()
+    run = AiVisibilityRun(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        prompt_id=prompt.id,
+        query_set_id=query_set.id,
+        question_id=question.id,
+        prompt_snapshot=prompt.prompt_text,
+        status="insufficient_evidence",
+        mentioned=None,
+        cited=None,
+        recommended=None,
+        incorrect=None,
+    )
+    db.add(run)
+    await db.flush()
+    question.run_id = run.id
+    await db.commit()
+
+    latest = await query_sets.latest_query_set(db, user_id, channel_id)
+    assert latest["metrics"]["completed_runs"] == 1
+    assert latest["metrics"]["mention_rate"] == 0.0
+    assert latest["metrics"]["citation_rate"] == 0.0
+    assert latest["metrics"]["recommendation_rate"] == 0.0
+
+
+@pytest.mark.asyncio
 async def test_latest_query_set_excludes_failed_and_synthetic_sources(
     db, user_id, channel_id
 ):
