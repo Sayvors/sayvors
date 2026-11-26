@@ -463,8 +463,10 @@ async def test_job_rejects_unrelated_sources_before_the_llm(
 
     result = await jobs.handle_research(job, db)
     await db.refresh(run)
-    assert result["status"] == "insufficient_evidence"
-    assert run.failure_code == "irrelevant_sources"
+    assert result["status"] == "insufficient_evidence", run.error
+    assert run.failure_code == "no_third_party_evidence"
+    assert run.source_count == 2
+    assert run.answer_text
     assert called == []
 
 

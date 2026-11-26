@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import sentry_sdk
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
@@ -229,6 +229,58 @@ async def _set_terminal(
     return run
 
 
+async def _owned_evidence_fallback(
+    db: AsyncSession, run: AiVisibilityRun, branch: dict
+):
+    """Build a truthful brief when search finds no third-party coverage."""
+    name = str(branch.get("name") or run.prompt_snapshot)
+    address = str(branch.get("address") or "")
+    website = str(branch.get("website") or "")
+    maps_url = str(branch.get("maps_url") or "")
+    listing = f"{name} is located at {address}." if address else f"{name} is a verified branch."
+    no_coverage = (
+        "No independent public page discussing this branch was found in the search results."
+    )
+    facts = f"{listing} {no_coverage}"
+    await db.execute(
+        delete(AiVisibilitySource).where(AiVisibilitySource.run_id == run.id)
+    )
+    rows = [
+        AiVisibilitySource(
+            run_id=run.id,
+            position=0,
+            url=website or maps_url or "about:blank",
+            canonical_url=website or maps_url or "about:blank",
+            title=f"{name} (owned profile)",
+            excerpt=facts,
+        ),
+        AiVisibilitySource(
+            run_id=run.id,
+            position=1,
+            url=maps_url or website or "about:blank",
+            canonical_url=maps_url or website or "about:blank",
+            title=f"{name} on Google Maps",
+            excerpt=facts,
+        ),
+    ]
+    db.add_all(rows)
+    await db.commit()
+    payload = research.ResearchPayload(
+        answer=(
+            f"{listing.rstrip('.')} [S1]. "
+            f"{no_coverage.rstrip('.')} [S2]"
+        ),
+        claims=[
+            research.ResearchClaim(
+                claim=listing.rstrip("."),
+                quote=facts,
+                source_ids=["S1", "S2"],
+            )
+        ],
+    )
+    return rows, payload
+
+
 def _finish(run: AiVisibilityRun, started: float, status: str) -> dict:
     logger.info(
         "ai_visibility_research_finished",
@@ -331,20 +383,51 @@ async def handle_research(job, db: AsyncSession) -> dict:
         if len(usable) >= MIN_SOURCES_FOR_BRIEF and not _sources_are_relevant(
             usable, branch
         ):
-            run = await _set_terminal(
-                db,
-                run_id,
-                tenant_id,
-                job=job,
-                status="insufficient_evidence",
-                failure_code="irrelevant_sources",
-                error=(
-                    "No supplied public page discusses this branch, so Sayvors "
-                    "will not invent an answer."
-                ),
+            owned_rows, payload = await _owned_evidence_fallback(db, run, branch)
+            source_payload = _source_payload(owned_rows)
+            payload = validation.validate(payload, source_payload, branch)
+            run.status = "insufficient_evidence"
+            run.failure_code = "no_third_party_evidence"
+            run.error = (
+                "No independent public page discusses this branch. "
+                "The brief uses the verified owned profile and shows what to fix."
             )
-            if run is None:
-                return {"status": "cancelled", "run_id": run_id}
+            run.answer_text = payload.answer
+            run.mentioned = payload.mentioned
+            run.cited = payload.cited
+            run.recommended = payload.recommended
+            run.incorrect = payload.incorrect
+            run.validation_status = "passed"
+            run.evidence_coverage = {
+                "source_count": len(owned_rows),
+                "validated_claim_count": 1,
+                "unsupported_claim_count": 0,
+                "third_party_source_count": 0,
+            }
+            run.source_count = len(owned_rows)
+            run.validated_claim_count = 1
+            run.unsupported_claim_count = 0
+            run.competitor_mentions = []
+            run.claims_json = [row.model_dump() for row in payload.claims]
+            actions = decisions.build_actions(payload, branch=branch)
+            actions.insert(
+                0,
+                {
+                    "priority": "P1",
+                    "category": "content_gap",
+                    "title": "Earn independent public coverage",
+                    "rationale": (
+                        "No third-party page discusses this branch. Publish a "
+                        "branch page naming the locality, then earn local citations."
+                    ),
+                    "deep_link": "/dashboard/posts-media",
+                    "effort": "medium",
+                    "evidence": {"third_party_source_count": 0},
+                },
+            )
+            run.actions_json = actions
+            run.completed_at = _now()
+            await db.commit()
             return _finish(run, started, run.status)
         if len(usable) < MIN_SOURCES_FOR_BRIEF:
             run = await _set_terminal(
@@ -457,7 +540,9 @@ async def handle_research(job, db: AsyncSession) -> dict:
             )
             raise
         logger.warning(
-            "ai_visibility_research_rejected",
+            "ai_visibility_research_rejected code=%s detail=%s",
+            type(exc).__name__,
+            str(exc)[:200],
             extra={
                 "run_id": run_id,
                 "tenant_id": tenant_id,
@@ -479,7 +564,9 @@ async def handle_research(job, db: AsyncSession) -> dict:
         validation.CitationValidationError,
     ) as exc:
         logger.warning(
-            "ai_visibility_research_rejected",
+            "ai_visibility_research_rejected code=%s detail=%s",
+            type(exc).__name__,
+            str(exc)[:200],
             extra={
                 "run_id": run_id,
                 "tenant_id": tenant_id,
