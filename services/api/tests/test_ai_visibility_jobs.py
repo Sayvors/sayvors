@@ -75,7 +75,7 @@ async def test_job_completes_with_validated_brief(
             SimpleNamespace(url="https://b.example", title="B", snippet=""),
         ]
 
-    async def _fetch(_db, run_id, rows):
+    async def _fetch(_db, run_id, rows, **_kwargs):
         return [
             AiVisibilitySource(
                 run_id=run_id,
@@ -482,6 +482,48 @@ async def test_job_rejects_unrelated_sources_before_the_llm(
 
 
 @pytest.mark.asyncio
+async def test_job_rejects_locality_only_sources(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    db.add_all(
+        [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=position,
+                url=f"https://makkah{position}.example",
+                canonical_url=f"https://makkah{position}.example",
+                title="Makkah service portal",
+                excerpt="Government services in Makkah for residents and visitors.",
+            )
+            for position in range(2)
+        ]
+    )
+    await db.commit()
+
+    async def _facts(*_args):
+        return {
+            "name": "Sayvors Company Branch-Makkah",
+            "address": "Azziziya, Makkah",
+        }
+
+    async def _complete(*_args, **_kwargs):
+        raise AssertionError("locality-only sources must not reach the model")
+
+    async def _profiles(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+    monkeypatch.setattr(jobs.research, "complete_research", _complete)
+    monkeypatch.setattr(jobs.search, "discover_public_profiles", _profiles)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "insufficient_evidence"
+    assert run.failure_code == "no_third_party_evidence"
+
+
+@pytest.mark.asyncio
 async def test_job_marks_insufficient_evidence(
     db, user_id, channel_id, monkeypatch
 ):
@@ -490,7 +532,7 @@ async def test_job_marks_insufficient_evidence(
     async def _search(_tenant, _query):
         return [SimpleNamespace(url="https://a.example", title="A", snippet="")]
 
-    async def _fetch(_db, run_id, rows):
+    async def _fetch(_db, run_id, rows, **_kwargs):
         return []
 
     monkeypatch.setattr(jobs.search, "search_public_web", _search)

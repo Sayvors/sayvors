@@ -36,14 +36,22 @@ def _same_site(client):
 
 @pytest.fixture(autouse=True)
 def _funded_research(monkeypatch):
+    from types import SimpleNamespace
+
     async def _allow(_tenant_id, _feature):
         return None
 
     async def _balance(_tenant_id):
         return 10_000
 
+    async def _entitlements(_tenant_id, _db):
+        return SimpleNamespace(
+            max_quick_research_month=None, max_deep_research_month=None
+        )
+
     monkeypatch.setattr(router, "check_feature", _allow)
     monkeypatch.setattr(router, "get_balance", _balance)
+    monkeypatch.setattr(router, "get_entitlements", _entitlements)
 
 
 async def _prompt(db, tenant_id, channel_id):
@@ -59,6 +67,19 @@ async def _prompt(db, tenant_id, channel_id):
     db.add(row)
     await db.commit()
     return row
+
+
+@pytest.mark.asyncio
+async def test_deep_run_persists_its_depth(client, db, user_id, channel_id):
+    prompt = await _prompt(db, user_id, channel_id)
+    response = client.post(
+        "/api/v1/ai-visibility/runs",
+        json={"channel_id": channel_id, "prompt_id": prompt.id, "depth": "deep"},
+    )
+    assert response.status_code == 201
+    assert response.json()["research_depth"] == "deep"
+    row = await db.get(AiVisibilityRun, response.json()["id"])
+    assert row.research_depth == "deep"
 
 
 @pytest.mark.asyncio

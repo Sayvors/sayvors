@@ -30,6 +30,8 @@ export default function PlansPage() {
   const [maxLocations, setMaxLocations] = useState<string>("");
   const [maxTeamMembers, setMaxTeamMembers] = useState<string>("");
   const [maxRegenerations, setMaxRegenerations] = useState<string>("");
+  const [maxQuickResearch, setMaxQuickResearch] = useState<string>("");
+  const [maxDeepResearch, setMaxDeepResearch] = useState<string>("");
   const [sortOrder, setSortOrder] = useState(0);
   const [isActive, setIsActive] = useState(true);
   const [featureFlags, setFeatureFlags] = useState<Record<string, boolean>>({});
@@ -60,6 +62,7 @@ export default function PlansPage() {
     setSlug(""); setName(""); setDescription("");
     setPriceCents(0); setCreditCents(0);
     setMaxChannels(""); setMaxMessages(""); setMaxLocations(""); setMaxTeamMembers(""); setMaxRegenerations("");
+    setMaxQuickResearch(""); setMaxDeepResearch("");
     setSortOrder(0); setIsActive(true);
     const defaults: Record<string, boolean> = {};
     features.forEach((spec) => { defaults[spec.key] = spec.default; });
@@ -76,6 +79,8 @@ export default function PlansPage() {
     setMaxLocations(p.max_locations == null ? "" : String(p.max_locations));
     setMaxTeamMembers(p.max_team_members == null ? "" : String(p.max_team_members));
     setMaxRegenerations(p.max_regenerations_day == null ? "" : String(p.max_regenerations_day));
+    setMaxQuickResearch(p.max_quick_research_month == null ? "" : String(p.max_quick_research_month));
+    setMaxDeepResearch(p.max_deep_research_month == null ? "" : String(p.max_deep_research_month));
     setSortOrder(p.sort_order); setIsActive(p.is_active);
     const flags: Record<string, boolean> = {};
     features.forEach((spec) => { flags[spec.key] = !!(p.features || {})[spec.key]; });
@@ -111,6 +116,8 @@ export default function PlansPage() {
         max_locations: maxLocations.trim() === "" ? null : Number(maxLocations),
         max_team_members: maxTeamMembers.trim() === "" ? null : Number(maxTeamMembers),
         max_regenerations_day: maxRegenerations.trim() === "" ? null : Number(maxRegenerations),
+        max_quick_research_month: maxQuickResearch.trim() === "" ? null : Number(maxQuickResearch),
+        max_deep_research_month: maxDeepResearch.trim() === "" ? null : Number(maxDeepResearch),
         features: featureFlags,
         is_active: isActive,
         sort_order: sortOrder,
@@ -126,6 +133,8 @@ export default function PlansPage() {
           max_locations: payload.max_locations,
           max_team_members: payload.max_team_members,
           max_regenerations_day: payload.max_regenerations_day,
+          max_quick_research_month: payload.max_quick_research_month,
+          max_deep_research_month: payload.max_deep_research_month,
           features: payload.features,
           is_active: payload.is_active,
           sort_order: payload.sort_order,
@@ -211,6 +220,14 @@ export default function PlansPage() {
             <div>
               <label className="mb-1 block text-[11px] font-medium text-ink/60">Max regenerations/day (blank = unlimited)</label>
               <input className="input-field" type="number" min={1} value={maxRegenerations} onChange={(e) => setMaxRegenerations(e.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-ink/60">Quick research runs/month (blank = unlimited)</label>
+              <input className="input-field" type="number" min={1} value={maxQuickResearch} onChange={(e) => setMaxQuickResearch(e.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-ink/60">Deep research runs/month (blank = unlimited)</label>
+              <input className="input-field" type="number" min={1} value={maxDeepResearch} onChange={(e) => setMaxDeepResearch(e.target.value)} />
             </div>
             <div>
               <label className="mb-1 block text-[11px] font-medium text-ink/60">Sort order</label>

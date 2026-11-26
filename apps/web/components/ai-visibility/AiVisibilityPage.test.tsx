@@ -149,6 +149,7 @@ describe("AiVisibilityPage", () => {
       expect(api.createRun).toHaveBeenCalledWith({
         channel_id: "branch-1",
         prompt_id: "prompt-1",
+        depth: "quick",
       }),
     );
   });

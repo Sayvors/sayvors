@@ -61,6 +61,7 @@ export type AiVisibilityRun = {
   prompt_id: string;
   prompt_snapshot: string;
   locale: string;
+  research_depth: string;
   status: string;
   job_id: string | null;
   validation_status: string;
@@ -122,8 +123,15 @@ export const updatePrompt = (id: string, body: Partial<Pick<AiVisibilityPrompt, 
 export const deletePrompt = (id: string) =>
   apiFetch(`/api/v1/ai-visibility/prompts/${encodeURIComponent(id)}`, { method: "DELETE" }) as Promise<void>;
 
-export const createRun = (body: { channel_id: string; prompt_id: string }) =>
-  apiFetch("/api/v1/ai-visibility/runs", { method: "POST", body: JSON.stringify(body) }) as Promise<AiVisibilityRun>;
+export const createRun = (body: {
+  channel_id: string;
+  prompt_id: string;
+  depth?: "quick" | "deep";
+}) =>
+  apiFetch("/api/v1/ai-visibility/runs", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }) as Promise<AiVisibilityRun>;
 
 export const fetchRun = (id: string) =>
   apiFetch(`/api/v1/ai-visibility/runs/${encodeURIComponent(id)}`) as Promise<AiVisibilityRunDetail>;

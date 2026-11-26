@@ -223,6 +223,8 @@ async def list_public_plans(db: AsyncSession = Depends(get_db)):
             "max_locations": r.max_locations,
             "max_team_members": r.max_team_members,
             "max_regenerations_day": r.max_regenerations_day,
+            "max_quick_research_month": r.max_quick_research_month,
+            "max_deep_research_month": r.max_deep_research_month,
             "features": r.features or {},
             "sort_order": r.sort_order,
         }

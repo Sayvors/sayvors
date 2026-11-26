@@ -260,6 +260,8 @@ class Plan(Base):
     # behaviour (no campaigns can be created until a plan opts in).
     max_campaigns_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_campaign_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_quick_research_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_deep_research_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Feature flags / arbitrary limits.
     features: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")

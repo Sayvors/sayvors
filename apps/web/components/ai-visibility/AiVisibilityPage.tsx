@@ -31,6 +31,7 @@ export default function AiVisibilityPage() {
   const channels = useGoogleChannels();
   const [channelId, setChannelId] = useState<string | null>(null);
   const [days, setDays] = useState(30);
+  const [depth, setDepth] = useState<"quick" | "deep">("quick");
   const [selectedPromptId, setSelectedPromptId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -128,6 +129,7 @@ export default function AiVisibilityPage() {
       const run = await createRun({
         channel_id: channelId,
         prompt_id: prompt.id,
+        depth,
       });
       setSelectedPromptId(prompt.id);
       setSelectedRunId(run.id);
@@ -185,6 +187,16 @@ export default function AiVisibilityPage() {
             <option value={90}>{copy.range90}</option>
             <option value={365}>{copy.range365}</option>
             <option value={0}>{copy.rangeAll}</option>
+          </select>
+          <select
+            aria-label={copy.depth}
+            title={copy.tipDepth}
+            value={depth}
+            onChange={(event) => setDepth(event.target.value as "quick" | "deep")}
+            className="ai-control min-w-36 px-3 text-[12px] font-semibold"
+          >
+            <option value="quick">{copy.quickScan}</option>
+            <option value="deep">{copy.deepResearch}</option>
           </select>
           <button
             type="button"
