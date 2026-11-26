@@ -13,11 +13,10 @@ import sentry_sdk
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..channels.models import Channel
 from ..jobs.models import Job
-from ..locations.models import LocationProfile
 from . import decisions, research, search, sources, validation
 from .models import AiVisibilityRun, AiVisibilitySource
+from .profile import load_branch_facts
 from .service import ACTIVE_RUN_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -59,44 +58,6 @@ class RunCancelled(RuntimeError):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-async def load_branch_facts(
-    db: AsyncSession, tenant_id: str, channel_id: str
-) -> dict:
-    channel = (
-        await db.execute(
-            select(Channel).where(
-                Channel.id == channel_id,
-                Channel.user_id == tenant_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if channel is None:
-        raise ValueError("channel_not_owned")
-    try:
-        meta = json.loads(channel.metadata_json or "{}")
-    except (TypeError, ValueError):
-        meta = {}
-    listing_id = str(meta.get("location_id") or channel.listing_key or "")
-    profile = (
-        await db.execute(
-            select(LocationProfile).where(
-                LocationProfile.user_id == tenant_id,
-                LocationProfile.listing_id == listing_id,
-            )
-        )
-    ).scalar_one_or_none()
-    return {
-        "name": channel.display_name,
-        "address": meta.get("address") or meta.get("locality"),
-        "phone": meta.get("phone"),
-        "website": meta.get("website"),
-        "maps_url": meta.get("maps_url"),
-        "categories": profile.categories if profile else {},
-        "hours": profile.hours if profile else {},
-        "description": profile.description if profile else None,
-    }
 
 
 def _source_payload(rows) -> list[dict]:
