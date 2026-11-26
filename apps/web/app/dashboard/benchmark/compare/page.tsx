@@ -33,10 +33,16 @@ import DistributionStrip from "@/components/benchmark/DistributionStrip";
 import OwnScorecards from "@/components/benchmark/OwnScorecards";
 import ReviewResponseTable from "@/components/benchmark/ReviewResponseTable";
 import SentimentVelocityBars from "@/components/benchmark/SentimentVelocityBars";
+import StarDistributionBars from "@/components/benchmark/StarDistributionBars";
+import BenchmarkGapBars from "@/components/benchmark/BenchmarkGapBars";
+import CompetitorPressureCard from "@/components/benchmark/CompetitorPressureCard";
+import MarketPositionScatter from "@/components/benchmark/MarketPositionScatter";
+import PeriodDeltaCards from "@/components/benchmark/PeriodDeltaCards";
+import BenchmarkStoryCharts from "@/components/benchmark/BenchmarkStoryCharts";
+import BenchmarkChartsGallery from "@/components/benchmark/BenchmarkChartsGallery";
 import AiSummaryCard from "@/components/benchmark/AiSummaryCard";
 import BaselineAlert from "@/components/benchmark/BaselineAlert";
 import CompletenessCard from "@/components/benchmark/CompletenessCard";
-import FixFirstTickets from "@/components/benchmark/FixFirstTickets";
 import ReviewKeywords from "@/components/benchmark/ReviewKeywords";
 import { queryKeys } from "@/lib/query-keys";
 import {
@@ -425,7 +431,7 @@ function MatrixTable<T extends string>({
             })}
           </ul>
         ) : (
-          <p className="px-3 py-4 text-center text-[11px] text-[#3B2D5E]">No business selected.</p>
+          <p className="px-3 py-4 text-center text-[11px] text-[#3B2D5E]">{c.noBusinessSelected}</p>
         )}
       </div>
 
@@ -833,6 +839,12 @@ function FadedCell({
       role="button"
       tabIndex={0}
       onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
       className={`h-[132px] cursor-pointer overflow-hidden rounded-[8px] px-1.5 py-1.5 transition-colors hover:bg-[#F4F2F7] ${FOCUS}`}
     >
       <ul className="flex flex-col gap-1.5">
@@ -897,9 +909,52 @@ function ReviewsPopup({
   const [filter, setFilter] = useState<PopupFilter>("newest");
   const rows = popupReviews(subject, category, filter);
   const color = SENTIMENT_CATEGORY_COLORS[category];
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const titleId = "benchmark-reviews-popup-title";
+
+  useEffect(() => {
+    closeRef.current?.focus();
+  }, []);
+
+  function onDialogKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Tab") return;
+    const root = dialogRef.current;
+    if (!root) return;
+    const focusable = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    );
+    if (focusable.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement as HTMLElement | null;
+    if (event.shiftKey) {
+      if (active === first || !root.contains(active)) {
+        event.preventDefault();
+        last.focus();
+      }
+    } else if (active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4">
-      <div className="flex max-h-[86vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.35)]">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onKeyDown={onDialogKeyDown}
+        className="flex max-h-[86vh] w-full max-w-[860px] flex-col overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white shadow-[0_24px_80px_rgba(20,16,31,0.35)]"
+      >
         <div className="flex items-start justify-between gap-3 border-b border-[var(--ui-line)] bg-[#FAFAFB] px-4 py-3">
           <div className="flex items-center gap-2.5">
             <GoogleMark size={22} />
@@ -910,7 +965,7 @@ function ReviewsPopup({
                   {c.googleReviews}
                 </span>
               </div>
-              <h2 className="text-[14px] font-bold text-[#14101F]">
+              <h2 id={titleId} className="text-[14px] font-bold text-[#14101F]">
                 {subject.name || "—"}
               </h2>
               <p className="text-[10px] text-[#8A8496]">
@@ -931,6 +986,7 @@ function ReviewsPopup({
               <option value="all">{c.all}</option>
             </select>
             <button
+              ref={closeRef}
               type="button"
               onClick={close}
               className={`rounded-[8px] border border-[#3D1D6E]/30 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3D1D6E] ${FOCUS}`}
@@ -1047,12 +1103,14 @@ function SentimentReviewsTable({
   error,
   onRetry,
   openPopup,
+  className = "mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white",
 }: {
   subjects: SubjectReviews[];
   loading: boolean;
-  error: unknown;
+  error?: unknown;
   onRetry: () => void;
   openPopup: (subject: SubjectReviews, category: SentimentCategory) => void;
+  className?: string;
 }) {
   const { t } = useI18n();
   const c = t.benchmark.compare;
@@ -1087,7 +1145,7 @@ function SentimentReviewsTable({
   }
 
   return (
-    <section className="mt-4 overflow-hidden rounded-[8px] border border-[var(--ui-line)] bg-white">
+    <section className={className}>
       <div className="flex items-center justify-between border-b border-[var(--ui-line)] px-3 py-2">
         <h2 className="text-[12px] font-bold uppercase tracking-wide text-[#14101F]">
           {c.reviews}
@@ -1141,7 +1199,7 @@ function SentimentReviewsTable({
           </table>
         ) : (
           <p className="px-3 py-4 text-center text-[11px] text-[#3B2D5E]">
-            No business selected.
+            {c.noBusinessSelected}
           </p>
         )}
       </div>
@@ -1164,7 +1222,7 @@ function SentimentReviewsTable({
                 scope="col"
                 className="sticky left-0 z-10 min-w-[132px] border-b border-r border-[var(--ui-line)] bg-[#FAFAFB] px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-[#3B2D5E]"
               >
-                Category
+                {c.category}
               </th>
               {subjects.map((subject) => (
                 <th
@@ -1296,6 +1354,7 @@ export default function ComparePage() {
     subject: SubjectReviews;
     category: SentimentCategory;
   } | null>(null);
+  const [reviewTab, setReviewTab] = useState<"response" | "sentiment" | "keywords">("response");
 
   // Subject key → stored history points, feeding the scorecard sparklines
   // and the baseline alert.
@@ -1569,8 +1628,26 @@ export default function ComparePage() {
           {compareQuery.data?.summary ? (
             <NorthStarCard
               summary={compareQuery.data.summary}
+              subjects={subjects}
             />
           ) : null}
+          <div className="mt-4 flex flex-wrap gap-2 rounded-[8px] border border-[var(--ui-line)] bg-white px-3 py-2 text-[10px] font-semibold text-[#3B2D5E]">
+            <span className="rounded-full bg-[#F4F2F7] px-2 py-1">{c.confidenceCompared(subjects.filter((s) => s.available).length)}</span>
+            <span className="rounded-full bg-[#F4F2F7] px-2 py-1">{range === "live" ? c.confidenceLive : c.confidenceStored(days ?? 0)}</span>
+            {reviewSubjects.some((s) => s.summary.evidence_basis === "cached_sample") ? (
+              <span className="rounded-full bg-[#F4F2F7] px-2 py-1">{c.confidenceCachedSample}</span>
+            ) : null}
+            {subjects.some((s) => s.freshness?.stale) ? (
+              <span className="rounded-full bg-[#FFF3D6] px-2 py-1 text-[#8A6100]">{c.confidenceStale}</span>
+            ) : null}
+            <span className="rounded-full bg-[#F4F2F7] px-2 py-1">{c.confidenceOwnerOnly}</span>
+          </div>
+          <BenchmarkStoryCharts
+            subjects={subjects}
+            mainKey={selection.main}
+            reviewSubjects={reviewSubjects}
+            historyBySubject={historyBySubject}
+          />
           <AiSummaryCard subjects={keys} />
           {compareQuery.data?.distribution ? (
             <DistributionStrip
@@ -1578,11 +1655,27 @@ export default function ComparePage() {
               mainKey={selection.main}
             />
           ) : null}
-          {compareQuery.data?.summary ? (
-            <FixFirstTickets summary={compareQuery.data.summary} subjects={subjects} />
-          ) : null}
+          <BenchmarkGapBars
+            subjects={subjects}
+            mainKey={selection.main}
+            responseRates={Object.fromEntries(reviewSubjects.map((s) => [s.key, s.summary.response_rate]))}
+          />
+          <MarketPositionScatter subjects={subjects} mainKey={selection.main} />
+          <CompetitorPressureCard rows={compareQuery.data?.pressure ?? []} />
+          <PeriodDeltaCards subjects={subjects} mainKey={selection.main} days={days} />
+          <BenchmarkChartsGallery
+            subjects={subjects}
+            mainKey={selection.main}
+            reviewSubjects={reviewSubjects}
+            historyBySubject={historyBySubject}
+            themes={reviewThemesQuery.data}
+          />
           <CompletenessCard subjects={subjects} />
           <SentimentVelocityBars
+            subjects={compareQuery.data?.subjects ?? []}
+            mainKey={selection.main}
+          />
+          <StarDistributionBars
             subjects={compareQuery.data?.subjects ?? []}
             mainKey={selection.main}
           />
@@ -1628,28 +1721,89 @@ export default function ComparePage() {
             onDrillDown={openWorstReviews}
             drillLoading={reviewsQuery.isPending}
           />
-          <ReviewResponseTable
-            subjects={reviewSubjects}
-            loading={reviewsQuery.isPending}
-            error={reviewsQuery.error}
-            onRetry={() => void reviewsQuery.refetch()}
-          />
-          <SentimentReviewsTable
-            subjects={reviewSubjects}
-            loading={reviewsQuery.isPending}
-            error={reviewsQuery.error}
-            onRetry={() => void reviewsQuery.refetch()}
-            openPopup={(subject, category) => setReviewsPopup({ subject, category })}
-          />
-          <ReviewKeywords
-            key={keys.join("|")}
-            data={reviewThemesQuery.data}
-            mainKey={selection.main}
-            loading={reviewThemesQuery.isPending}
-            fetching={reviewThemesQuery.isFetching}
-            error={reviewThemesQuery.error}
-            onRetry={() => void retryReviewKeywords()}
-          />
+          <section className="mt-6 rounded-[8px] border border-[var(--ui-line)] bg-white p-3 sm:p-4">
+            <div className="flex flex-wrap items-center gap-2 border-b border-[var(--ui-line)] pb-3">
+              {([
+                ["response", c.reviewResponsesTitle],
+                ["sentiment", c.reviews],
+                ["keywords", c.reviewKeywords.title],
+              ] as const).map(([key, label]) => {
+                const active = reviewTab === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setReviewTab(key)}
+                    className={`rounded-[8px] border px-3 py-1.5 text-[11px] font-semibold transition-colors ${FOCUS} ${
+                      active
+                        ? "border-[#3D1D6E] bg-[#3D1D6E] text-white"
+                        : "border-[var(--ui-line)] bg-white text-[#3B2D5E] hover:bg-[#F4F2F7]"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {reviewTab === "response" ? (
+              reviewsQuery.isError ? (
+                <div role="alert" className="mt-4 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+                  <p className="text-[12px] font-semibold text-[#B3123A]">{c.couldNotLoadReviewResponses}</p>
+                  <button
+                    type="button"
+                    onClick={() => void reviewsQuery.refetch()}
+                    className={`mt-2 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+                  >
+                    {t.common.retry}
+                  </button>
+                </div>
+              ) : (
+                <ReviewResponseTable
+                  subjects={reviewSubjects}
+                  loading={reviewsQuery.isPending}
+                  onRetry={() => void reviewsQuery.refetch()}
+                  className="mt-4 overflow-hidden"
+                />
+              )
+            ) : null}
+
+            {reviewTab === "sentiment" ? (
+              reviewsQuery.isError ? (
+                <div role="alert" className="mt-4 rounded-[8px] border border-[#FF4F6E]/35 bg-white px-3 py-2">
+                  <p className="text-[12px] font-semibold text-[#B3123A]">{c.couldNotLoadReviewResponses}</p>
+                  <button
+                    type="button"
+                    onClick={() => void reviewsQuery.refetch()}
+                    className={`mt-2 inline-flex min-h-11 items-center rounded-[8px] border border-[#3D1D6E]/25 bg-white px-3 text-[11px] font-bold text-[#3D1D6E] ${FOCUS}`}
+                  >
+                    {t.common.retry}
+                  </button>
+                </div>
+              ) : (
+                <SentimentReviewsTable
+                  subjects={reviewSubjects}
+                  loading={reviewsQuery.isPending}
+                  onRetry={() => void reviewsQuery.refetch()}
+                  openPopup={(subject, category) => setReviewsPopup({ subject, category })}
+                  className="mt-4 overflow-hidden"
+                />
+              )
+            ) : null}
+
+            {reviewTab === "keywords" ? (
+              <ReviewKeywords
+                key={keys.join("|")}
+                data={reviewThemesQuery.data}
+                mainKey={selection.main}
+                loading={reviewThemesQuery.isPending}
+                fetching={reviewThemesQuery.isFetching}
+                error={reviewThemesQuery.error}
+                onRetry={() => void retryReviewKeywords()}
+              />
+            ) : null}
+          </section>
           {reviewsPopup ? (
             <ReviewsPopup
               subject={reviewsPopup.subject}

@@ -125,6 +125,71 @@ def distribution(subjects: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def pressure_scores(
+    subjects: list[dict[str, Any]], own_keys: list[str]
+) -> list[dict[str, Any]]:
+    """Rank competitors by pressure on the selected own branch.
+
+    Score is a simple explainable blend of proximity and performance gaps.
+    Only available non-own subjects are scored. Missing inputs reduce
+    confidence; we never invent values.
+    """
+    own_set = {k.strip() for k in own_keys}
+    own = [
+        s for s in subjects
+        if s.get("available") and (s.get("key") or "").strip() in own_set
+    ]
+    if not own:
+        return []
+    anchor = own[0]
+    out: list[dict[str, Any]] = []
+    for s in subjects:
+        if not s.get("available") or (s.get("key") or "").strip() in own_set:
+            continue
+        loc = s.get("location") or {}
+        dist = loc.get("distance_km")
+        rating_gap = None
+        a_rating = value(anchor, "avg_rating")
+        c_rating = value(s, "avg_rating")
+        if a_rating is not None and c_rating is not None:
+            rating_gap = round(c_rating - a_rating, 2)
+        velocity_gap = None
+        a_vel = value(anchor, "reviews_per_month")
+        c_vel = value(s, "reviews_per_month")
+        if a_vel is not None and c_vel is not None:
+            velocity_gap = round(c_vel - a_vel, 2)
+        sentiment_gap = None
+        a_pos = value(anchor, "positive_pct")
+        c_pos = value(s, "positive_pct")
+        if a_pos is not None and c_pos is not None:
+            sentiment_gap = round(c_pos - a_pos, 2)
+
+        # Normalize components to 0..1 where higher means more pressure.
+        rating_pressure = max(0.0, min(1.0, (rating_gap or 0.0) / 1.5)) if rating_gap is not None else 0.0
+        velocity_pressure = max(0.0, min(1.0, (velocity_gap or 0.0) / 20.0)) if velocity_gap is not None else 0.0
+        sentiment_pressure = max(0.0, min(1.0, (sentiment_gap or 0.0) / 30.0)) if sentiment_gap is not None else 0.0
+        distance_pressure = 0.0
+        if isinstance(dist, (int, float)):
+            # <=1km high pressure, >=20km low pressure.
+            distance_pressure = max(0.0, min(1.0, (20.0 - float(dist)) / 19.0))
+
+        inputs = [rating_gap is not None, velocity_gap is not None, sentiment_gap is not None, isinstance(dist, (int, float))]
+        confidence = round(sum(1 for i in inputs if i) / len(inputs), 2)
+        score = round((rating_pressure * 0.35 + velocity_pressure * 0.25 + sentiment_pressure * 0.2 + distance_pressure * 0.2) * 100, 1)
+        out.append({
+            "key": s.get("key"),
+            "name": s.get("name"),
+            "score": score,
+            "confidence": confidence,
+            "distance_km": dist,
+            "rating_gap": rating_gap,
+            "velocity_gap": velocity_gap,
+            "sentiment_gap": sentiment_gap,
+        })
+    out.sort(key=lambda r: (-r["score"], -(r["confidence"]), r.get("name") or ""))
+    return out
+
+
 def north_star(
     subjects: list[dict[str, Any]], own_keys: list[str]
 ) -> dict[str, Any] | None:

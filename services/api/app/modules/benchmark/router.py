@@ -16,7 +16,7 @@ from ..billing.entitlements import check_feature
 from ..redis.service import cache_get, cache_set
 from ..team.context import TenantContext, require_perm, tenant_id_of
 from . import ai, boq, compare, mapsearch, outscraper, places, service, theme_service
-from .summary import distribution as metric_distribution, north_star
+from .summary import distribution as metric_distribution, north_star, pressure_scores
 
 router = APIRouter(prefix="/api/v1/benchmark", tags=["benchmark"])
 
@@ -329,6 +329,7 @@ async def compare_places(
         "subjects": subject_records,
         "distribution": metric_distribution(subject_records),
         "summary": north_star(subject_records, own_keys),
+        "pressure": pressure_scores(subject_records, own_keys),
     }
     try:
         await cache_set(key, json.dumps(payload, default=str), ttl=60)

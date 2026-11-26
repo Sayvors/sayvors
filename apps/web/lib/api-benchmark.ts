@@ -184,6 +184,22 @@ export interface ComparisonSubject {
     rating_change: number | null;
     period_impressions: number | null;
     period_calls: number | null;
+    prev_period_reviews?: number | null;
+    prev_period_avg_rating?: number | null;
+    period_reviews_delta?: number | null;
+    period_avg_rating_delta?: number | null;
+  };
+  location?: {
+    latitude: number | null;
+    longitude: number | null;
+    distance_km: number | null;
+    category: string | null;
+  };
+  freshness?: {
+    fetched_at: string | null;
+    age_seconds: number | null;
+    source: string | null;
+    stale: boolean | null;
   };
   facts: {
     positive_pct: number | null;
@@ -216,7 +232,7 @@ export function normalizeCompareRange(value: string | null): CompareRange {
 export function fetchComparison(
   subjects: string[],
   range: CompareRange = "live"
-): Promise<{ range: CompareRange; days: number | null; subjects: ComparisonSubject[]; summary: CompareSummary | null; distribution: CompareDistribution }> {
+): Promise<{ range: CompareRange; days: number | null; subjects: ComparisonSubject[]; summary: CompareSummary | null; distribution: CompareDistribution; pressure?: PressureRow[] }> {
   const q = subjects.map((s) => `subjects=${encodeURIComponent(s)}`).join("&");
   return apiFetch(`/api/v1/benchmark/compare?${q}&range=${range}`);
 }
@@ -244,6 +260,17 @@ export interface DistributionRow {
 }
 
 export type CompareDistribution = Record<string, DistributionRow>;
+
+export interface PressureRow {
+  key: string;
+  name: string | null;
+  score: number;
+  confidence: number;
+  distance_km: number | null;
+  rating_gap: number | null;
+  velocity_gap: number | null;
+  sentiment_gap: number | null;
+}
 
 /* ── Stored history ───────────────────────────────────────────────────── */
 

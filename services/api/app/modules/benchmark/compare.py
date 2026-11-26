@@ -16,6 +16,7 @@ import json
 import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from math import atan2, cos, radians, sin, sqrt
 from typing import Any
 
 from sqlalchemy import case, func, select
@@ -102,6 +103,11 @@ def _blank_metrics() -> dict[str, Any]:
         "rating_change": None,
         "period_impressions": None,
         "period_calls": None,
+        # Previous equivalent window for delta/waterfall visuals. Null when unknown.
+        "prev_period_reviews": None,
+        "prev_period_avg_rating": None,
+        "period_reviews_delta": None,
+        "period_avg_rating_delta": None,
     }
 
 
@@ -142,6 +148,15 @@ def _channel_tags(channel: Channel) -> list[str]:
     return list(dict.fromkeys(tags))[:MAX_TAGS]
 
 
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Great-circle distance in km. Pure and cheap; used for market proximity."""
+    r = 6371.0
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    return 2 * r * atan2(sqrt(a), sqrt(1 - a))
+
+
 def _subject(raw: str, kind: str, ident: str, *, available: bool,
              reason: str | None = None, **fields: Any) -> dict[str, Any]:
     return {
@@ -155,6 +170,8 @@ def _subject(raw: str, kind: str, ident: str, *, available: bool,
         "verified": False,
         "data_source": "sayvors_analytics" if kind == "own" else "google_places",
         "tags": [],
+        "location": {"latitude": None, "longitude": None, "distance_km": None, "category": None},
+        "freshness": {"fetched_at": None, "age_seconds": None, "source": None, "stale": None},
         "metrics": _blank_metrics(),
         "facts": _blank_facts(),
         "notes": [],
@@ -502,10 +519,29 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
         )
     notes.append("Views, calls, menu prices and registered staff are only available to the listing owner.")
 
+    fetched_iso = cached_at.isoformat() if cached_at else None
+    age_seconds = int((now - cached_at).total_seconds()) if cached_at else None
+    stale = bool(max_age_hours and cached_at and (now - cached_at) > timedelta(hours=max_age_hours))
+    types = details.get("types") or saved.types or []
+    category = _place_types(types)[0] if _place_types(types) else None
+    lat = saved.latitude if saved.latitude is not None else details.get("latitude")
+    lng = saved.longitude if saved.longitude is not None else details.get("longitude")
+    try:
+        lat = float(lat) if lat is not None else None
+        lng = float(lng) if lng is not None else None
+    except Exception:
+        lat = lng = None
     return _subject(
         raw, "saved", place_id, available=True,
         name=name or "Saved business",
         address=details.get("address"),
+        location={"latitude": lat, "longitude": lng, "distance_km": None, "category": category},
+        freshness={
+            "fetched_at": fetched_iso,
+            "age_seconds": age_seconds,
+            "source": source,
+            "stale": stale if cached_at else None,
+        },
         metrics=metrics, facts=facts,
         notes=notes,
     )
@@ -635,12 +671,15 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         # inside the window is a fact, not an estimate. The rating change is the
         # lifetime average now against the lifetime average on the day the
         # window opened — the same definition used for a saved competitor.
+        prev_cutoff = cutoff - timedelta(days=days)
         period_row = (
             await db.execute(
                 select(
                     func.sum(case((bucket >= cutoff, 1), else_=0)),
                     func.avg(case((bucket >= cutoff, ReviewInsight.rating))),
                     func.avg(case((bucket < cutoff, ReviewInsight.rating))),
+                    func.sum(case(((bucket >= prev_cutoff) & (bucket < cutoff), 1), else_=0)),
+                    func.avg(case(((bucket >= prev_cutoff) & (bucket < cutoff), ReviewInsight.rating))),
                 ).where(*base)
             )
         ).one()
@@ -651,6 +690,10 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
         before_avg = (
             round(float(period_row[2]), 2) if period_row[2] is not None else None
         )
+        prev_period_reviews = int(period_row[3] or 0)
+        prev_period_avg = (
+            round(float(period_row[4]), 2) if period_row[4] is not None else None
+        )
         current_avg = overview.get("avg_rating")
         rating_change = None
         if (
@@ -659,6 +702,12 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
             and before_avg is not None
         ):
             rating_change = round(float(current_avg) - before_avg, 2)
+        period_reviews_delta = period_reviews - prev_period_reviews
+        period_avg_rating_delta = (
+            round(period_avg - prev_period_avg, 2)
+            if period_avg is not None and prev_period_avg is not None
+            else None
+        )
 
         # No rows means Google has not synced performance for this window yet.
         # A zero would claim the location was never seen, which we do not know.
@@ -685,6 +734,10 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
                 int(perf_row[1] or 0) + int(perf_row[2] or 0) if has_perf else None
             ),
             "period_calls": int(perf_row[3] or 0) if has_perf else None,
+            "prev_period_reviews": prev_period_reviews,
+            "prev_period_avg_rating": prev_period_avg,
+            "period_reviews_delta": period_reviews_delta,
+            "period_avg_rating_delta": period_avg_rating_delta,
         })
         notes.insert(
             0,
@@ -692,12 +745,32 @@ async def _own_subject(db: AsyncSession, tenant_id: str, raw: str,
             f"{days} days of your connected location.",
         )
 
+    meta: dict[str, Any] = {}
+    try:
+        meta = json.loads(channel.metadata_json or "{}")
+    except Exception:
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    lat = meta.get("latitude") or meta.get("lat")
+    lng = meta.get("longitude") or meta.get("lng")
+    try:
+        lat = float(lat) if lat is not None else None
+        lng = float(lng) if lng is not None else None
+    except Exception:
+        lat = lng = None
+    address = str(meta.get("address") or meta.get("formatted_address") or "").strip() or None
+    category = (
+        str(meta.get("primary_category") or meta.get("category") or "").strip() or None
+    )
     return _subject(
         raw, "own", channel_id, available=True,
         name=channel.display_name,
-        address=None,
+        address=address,
         verified=verified,
         tags=_channel_tags(channel),
+        location={"latitude": lat, "longitude": lng, "distance_km": None, "category": category},
+        freshness={"fetched_at": None, "age_seconds": None, "source": "sayvors_analytics", "stale": None},
         metrics=metrics, facts=facts,
         notes=notes,
     )
@@ -741,6 +814,23 @@ async def compare_subjects(db: AsyncSession, tenant_id: str,
                 str(raw), "unknown", "", available=False,
                 reason="Could not load this side of the comparison.",
             ))
+    anchor = next(
+        (s for s in out if s.get("kind") == "own" and s.get("available")
+         and isinstance((s.get("location") or {}).get("latitude"), (int, float))
+         and isinstance((s.get("location") or {}).get("longitude"), (int, float))),
+        None,
+    )
+    if anchor:
+        a_lat = float(anchor["location"]["latitude"])
+        a_lng = float(anchor["location"]["longitude"])
+        for s in out:
+            loc = s.get("location") or {}
+            lat = loc.get("latitude")
+            lng = loc.get("longitude")
+            if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+                s["location"]["distance_km"] = round(_haversine_km(a_lat, a_lng, float(lat), float(lng)), 2)
+            else:
+                s["location"]["distance_km"] = None
     return out
 
 
