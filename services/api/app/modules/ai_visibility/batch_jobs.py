@@ -290,7 +290,7 @@ async def handle_query_set(job: Job, db: AsyncSession) -> dict:
             profile_data = await profile.load_business_profile(
                 db, query_set.tenant_id, query_set.channel_id
             )
-            generated = await questions.generate_questions(
+            generated = questions.generate_questions(
                 profile_data, limit=questions.MAX_INITIAL_QUESTIONS
             )
         query_set = await _load_query_set(db, job)

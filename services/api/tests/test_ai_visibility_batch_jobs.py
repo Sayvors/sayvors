@@ -48,7 +48,7 @@ async def _seed_two_question_set(db, user_id, channel_id, monkeypatch):
             "public_context": {"website": None, "public_results": [], "uncertainties": []},
         }
 
-    async def _questions(*_args, **_kwargs):
+    def _questions(*_args, **_kwargs):
         return [
             _question("Is Sayvors licensed in Makkah?", intent="licensing"),
             _question("هل يقدم Sayvors خدمات استقدام؟", language="ar", intent="services"),
@@ -83,7 +83,7 @@ async def test_query_set_job_persists_questions_and_starts_first_run(
             "public_context": {"website": None, "public_results": [], "uncertainties": []},
         }
 
-    async def _questions(*_args, **_kwargs):
+    def _questions(*_args, **_kwargs):
         return [
             _question("Is Sayvors licensed in Makkah?", intent="licensing"),
             _question("هل يقدم Sayvors خدمات استقدام؟", language="ar", intent="services"),
@@ -117,6 +117,39 @@ async def test_query_set_job_persists_questions_and_starts_first_run(
 
 
 @pytest.mark.asyncio
+async def test_query_set_job_uses_real_synchronous_question_generator(
+    db, user_id, channel_id, monkeypatch
+):
+    query_set = await query_sets.start_query_set(db, user_id, channel_id)
+    job = await db.get(Job, query_set.job_id)
+    job.status = "running"
+    job.lease_owner = "worker-real-generator"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    await db.commit()
+
+    async def _profile(*_args):
+        return {
+            "name": "Sayvors Company Branch-Makkah",
+            "categories": {"primary": "Recruitment office"},
+            "description": "Licensed manpower and domestic worker recruitment",
+            "services": ["Domestic worker recruitment"],
+            "address": "Makkah",
+            "locality": "Makkah",
+        }
+
+    monkeypatch.setattr(batch_jobs.profile, "load_business_profile", _profile)
+    result = await batch_jobs.handle_query_set(job, db)
+    await db.refresh(query_set)
+    assert result["status"] == "running"
+    assert query_set.total_questions > 0
+    assert (
+        await db.execute(
+            select(AiVisibilityQuestion).where(AiVisibilityQuestion.query_set_id == query_set.id)
+        )
+    ).scalars().all()
+
+
+@pytest.mark.asyncio
 async def test_query_set_job_marks_empty_generation_failed(
     db, user_id, channel_id, monkeypatch
 ):
@@ -130,7 +163,7 @@ async def test_query_set_job_marks_empty_generation_failed(
     async def _profile(*_args):
         return {"name": "Unknown", "categories": {}, "description": ""}
 
-    async def _questions(*_args, **_kwargs):
+    def _questions(*_args, **_kwargs):
         return []
 
     monkeypatch.setattr(batch_jobs.profile, "load_business_profile", _profile)
@@ -173,7 +206,7 @@ async def test_query_set_job_skips_questions_that_already_exist(
     async def _profile(*_args):
         return {"name": "Sayvors", "categories": {"primary": "Recruitment office"}}
 
-    async def _questions(*_args, **_kwargs):
+    def _questions(*_args, **_kwargs):
         return [_question(text, intent="licensing")]
 
     monkeypatch.setattr(batch_jobs.profile, "load_business_profile", _profile)
@@ -198,7 +231,7 @@ async def test_prompt_limit_failure_rolls_back_partial_questions(
     async def _profile(*_args):
         return {"name": "Sayvors", "categories": {"primary": "Recruitment office"}}
 
-    async def _questions(*_args, **_kwargs):
+    def _questions(*_args, **_kwargs):
         return [
             _question("Is Sayvors licensed?", intent="licensing"),
             _question("Does Sayvors recruit workers?", intent="services"),
@@ -234,7 +267,7 @@ async def test_first_child_quota_failure_terminalizes_set(
     async def _profile(*_args):
         return {"name": "Sayvors", "categories": {"primary": "Recruitment office"}}
 
-    async def _questions(*_args, **_kwargs):
+    def _questions(*_args, **_kwargs):
         return [_question("Is Sayvors licensed in Makkah?", intent="licensing")]
 
     async def _quota(*_args, **_kwargs):

@@ -119,7 +119,7 @@ async def test_latest_query_set_includes_generated_questions_and_outcomes(
             "locality": "Makkah",
         }
 
-    async def _questions(*_args, **_kwargs):
+    def _questions(*_args, **_kwargs):
         return [
             GeneratedQuestion(
                 question_text="Is Sayvors licensed in Makkah?",
