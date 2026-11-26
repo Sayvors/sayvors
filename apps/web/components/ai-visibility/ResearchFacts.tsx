@@ -4,6 +4,7 @@ type Copy = Dict["aiVisibility"];
 
 type StatCard = {
   key: string;
+  raw: number;
   value: string;
   label: string;
   caption: string;
@@ -45,7 +46,9 @@ export default function ResearchFacts({
     label: string,
     caption: string,
   ) => {
-    if (value !== null) cards.push({ key, value: value.toLocaleString(), label, caption });
+    if (value !== null) {
+      cards.push({ key, raw: value, value: value.toLocaleString(), label, caption });
+    }
   };
 
   push(
@@ -93,36 +96,44 @@ export default function ResearchFacts({
     copy.facts.claimsVerifiedCaption,
   );
   if (platforms !== null && platforms > 0) {
+    const found = num(metrics, "platforms_found") ?? 0;
     cards.push({
       key: "platforms",
+      raw: platforms,
       value: platforms.toLocaleString(),
       label: copy.facts.platformsChecked,
-      caption: `${copy.facts.platformsFound} ${num(metrics, "platforms_found") ?? 0}`,
+      caption: `${copy.facts.platformsFound} ${found}`,
     });
   }
 
   if (cards.length === 0) return null;
   return (
-    <section aria-label={copy.facts.title} className="space-y-2">
+    <section aria-label={copy.facts.title} className="space-y-3">
       <p className="ai-eyebrow">{copy.facts.title}</p>
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {cards.map((card) => (
-          <div
-            key={card.key}
-            className="rounded-[calc(var(--ai-radius-panel)*0.7)] border border-[var(--ai-line)] bg-[var(--ai-surface)] p-3 shadow-[var(--ai-shadow-panel)]"
-          >
-            <dt className="text-[10px] font-bold tracking-wide text-[var(--ai-muted)] uppercase">
-              {card.label}
-            </dt>
-            <dd className="mt-1 font-mono text-[26px] leading-8 font-bold text-[var(--ai-ink)]">
-              {card.value}
-            </dd>
-            <p className="mt-1 text-[10px] leading-4 text-[var(--ai-muted)]">
-              {card.caption}
-            </p>
-          </div>
-        ))}
-      </dl>
+      <div className="overflow-hidden rounded-[var(--ai-radius-panel)] border border-[var(--ai-line)] bg-[var(--ai-line)] shadow-[var(--ai-shadow-panel)]">
+        <dl className="grid grid-cols-2 gap-px sm:grid-cols-4">
+          {cards.map((card) => {
+            const isZero = card.raw === 0;
+            return (
+              <div key={card.key} className="bg-[var(--ai-surface)] px-4 py-4">
+                <dt className="text-[11px] font-semibold leading-4 text-[var(--ai-muted)]">
+                  {card.label}
+                </dt>
+                <dd
+                  className={`mt-2 font-mono text-[32px] font-bold leading-none tracking-tight ${
+                    isZero ? "text-[var(--ai-muted)]" : "text-[var(--ai-ink)]"
+                  }`}
+                >
+                  {card.value}
+                </dd>
+                <p className="mt-2 text-[11px] leading-4 text-[var(--ai-muted)]">
+                  {card.caption}
+                </p>
+              </div>
+            );
+          })}
+        </dl>
+      </div>
     </section>
   );
 }
