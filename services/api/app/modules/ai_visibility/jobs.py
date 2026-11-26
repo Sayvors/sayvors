@@ -268,10 +268,16 @@ async def _owned_evidence_fallback(
         if address
         else f"{safe_name} is a verified branch."
     )
-    no_coverage = (
-        "No independent public page discussing this branch was found in the search results."
+    finding = (
+        f"We found no independent public pages that mention {safe_name}"
+        + (f" in {address}" if address else "")
+        + "."
     )
-    facts = f"{listing} {no_coverage}"
+    impact = (
+        "Because AI assistants rely on public web sources, they currently have no "
+        "third-party evidence to cite or recommend this branch."
+    )
+    facts = f"{listing} {finding} {impact}"
     await db.execute(
         delete(AiVisibilitySource).where(AiVisibilitySource.run_id == run.id)
     )
@@ -296,16 +302,18 @@ async def _owned_evidence_fallback(
     db.add_all(rows)
     await db.commit()
     payload = research.ResearchPayload(
-        answer=(
-            f"{listing.rstrip('.')} [S1]. "
-            f"{no_coverage.rstrip('.')} [S2]"
-        ),
+        answer=f"{finding.rstrip('.')} [S1]. {impact.rstrip('.')} [S2]",
         claims=[
             research.ResearchClaim(
                 claim=listing.rstrip("."),
                 quote=listing,
                 source_ids=["S1", "S2"],
-            )
+            ),
+            research.ResearchClaim(
+                claim=finding.rstrip("."),
+                quote=finding,
+                source_ids=["S1", "S2"],
+            ),
         ],
     )
     return rows, payload
@@ -492,36 +500,62 @@ async def handle_research(job, db: AsyncSession) -> dict:
             run.recommended = payload.recommended
             run.incorrect = payload.incorrect
             run.validation_status = "passed"
+            validated = sum(1 for row in payload.claims if row.status == "supported")
             run.evidence_coverage = {
                 **coverage,
                 "source_count": len(owned_rows),
-                "validated_claim_count": 1,
+                "validated_claim_count": validated,
                 "unsupported_claim_count": 0,
                 "third_party_source_count": 0,
                 "owned_source_count": len(owned_rows),
             }
             run.source_count = len(owned_rows)
-            run.validated_claim_count = 1
+            run.validated_claim_count = validated
             run.unsupported_claim_count = 0
             run.competitor_mentions = []
             run.claims_json = [row.model_dump() for row in payload.claims]
-            actions = decisions.build_actions(payload, branch=branch)
-            actions.insert(
-                0,
+            run.actions_json = [
+                {
+                    "priority": "P0",
+                    "category": "content_gap",
+                    "title": "Create or verify your Google Business Profile",
+                    "rationale": (
+                        "AI assistants and local search rely heavily on Google Maps "
+                        "listings. A verified profile with the exact branch name, "
+                        "address, phone, hours, and category is the fastest way to "
+                        "create citable public evidence."
+                    ),
+                    "deep_link": "/dashboard/locations?tab=details",
+                    "effort": "medium",
+                    "evidence": {"source_ids": ["S1", "S2"]},
+                },
                 {
                     "priority": "P1",
                     "category": "content_gap",
-                    "title": "Earn independent public coverage",
+                    "title": "Publish a public branch page on your website",
                     "rationale": (
-                        "No third-party page discusses this branch. Publish a "
-                        "branch page naming the locality, then earn local citations."
+                        "Add a page that names the branch, district, city, services, "
+                        "and contact details. Independent pages that reference or "
+                        "link to it become evidence AI can cite."
                     ),
-                    "deep_link": "/dashboard/posts-media",
+                    "deep_link": "/dashboard/channels",
                     "effort": "medium",
+                    "evidence": {"source_ids": ["S1"]},
+                },
+                {
+                    "priority": "P1",
+                    "category": "content_gap",
+                    "title": "Get listed in trusted local directories",
+                    "rationale": (
+                        "Listings on reputable directories and industry registries "
+                        "create third-party coverage. Use the same branch name, "
+                        "address, and phone everywhere so sources agree."
+                    ),
+                    "deep_link": "/dashboard/channels",
+                    "effort": "low",
                     "evidence": {"third_party_source_count": 0},
                 },
-            )
-            run.actions_json = actions
+            ]
             run.completed_at = _now()
             await db.commit()
             return _finish(run, started, run.status)

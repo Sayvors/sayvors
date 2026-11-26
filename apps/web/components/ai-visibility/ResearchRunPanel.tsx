@@ -123,36 +123,38 @@ export default function ResearchRunPanel({
           </button>
         )}
       </div>
-      <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
-      <ResearchActivity
-        status={detail.status}
-        coverage={detail.evidence_coverage}
-        copy={copy}
-      />
       {active && (
-        <div className="space-y-3" role="status">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[12px] font-semibold text-[var(--ai-ink)]">{stage}</p>
-            <span className="font-mono text-[10px] text-[var(--ai-muted)]">
-              {progressFor(detail.status)}%
-            </span>
-          </div>
-          <progress
-            value={progressFor(detail.status)}
-            max={100}
-            aria-label={stage}
-            className="h-2 w-full overflow-hidden rounded-full accent-[var(--ai-signal)]"
+        <>
+          <ResearchActivity
+            status={detail.status}
+            coverage={detail.evidence_coverage}
+            copy={copy}
           />
-          <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[9px] uppercase tracking-wide text-[var(--ai-muted)]">
-            <span>Scan public pages</span>
-            <span>Check claims</span>
-            <span>Draft brief</span>
+          <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
+          <div className="space-y-3" role="status">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[12px] font-semibold text-[var(--ai-ink)]">{stage}</p>
+              <span className="font-mono text-[10px] text-[var(--ai-muted)]">
+                {progressFor(detail.status)}%
+              </span>
+            </div>
+            <progress
+              value={progressFor(detail.status)}
+              max={100}
+              aria-label={stage}
+              className="h-2 w-full overflow-hidden rounded-full accent-[var(--ai-signal)]"
+            />
+            <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[9px] uppercase tracking-wide text-[var(--ai-muted)]">
+              <span>Scan public pages</span>
+              <span>Check claims</span>
+              <span>Draft brief</span>
+            </div>
+            <div className="space-y-2 pt-1">
+              <div className="ai-skeleton h-3 w-2/3" />
+              <div className="ai-skeleton h-3 w-full" />
+            </div>
           </div>
-          <div className="space-y-2 pt-1">
-            <div className="ai-skeleton h-3 w-2/3" />
-            <div className="ai-skeleton h-3 w-full" />
-          </div>
-        </div>
+        </>
       )}
       {(actionError ||
         (detail.error && detail.status !== "insufficient_evidence")) && (
@@ -160,9 +162,26 @@ export default function ResearchRunPanel({
           {researchErrorMessage(actionError ?? detail.error)}
         </p>
       )}
-      {(detail.status === "completed" ||
-        detail.status === "insufficient_evidence") && (
-        <DecisionBrief detail={detail} copy={copy} />
+      {!active && (detail.status === "completed" || detail.status === "insufficient_evidence") && (
+        <>
+          <DecisionBrief detail={detail} copy={copy} />
+          <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
+          <ResearchActivity
+            status={detail.status}
+            coverage={detail.evidence_coverage}
+            copy={copy}
+          />
+        </>
+      )}
+      {!active && detail.status === "failed" && (
+        <>
+          <ResearchFacts coverage={detail.evidence_coverage} copy={copy} />
+          <ResearchActivity
+            status={detail.status}
+            coverage={detail.evidence_coverage}
+            copy={copy}
+          />
+        </>
       )}
     </div>
   );
