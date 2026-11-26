@@ -360,6 +360,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
             return _finish(run, started, "ambiguous")
 
         branch = await load_branch_facts(db, tenant_id, run.channel_id)
+        coverage = dict(run.evidence_coverage or {})
         snapshots = list(
             (
                 await db.execute(
@@ -372,13 +373,18 @@ async def handle_research(job, db: AsyncSession) -> dict:
         if not snapshots:
             await _status(db, run, "searching")
             await ensure_active()
-            results = await search.search_public_web(
-                tenant_id, search.build_query(run.prompt_snapshot, branch)
-            )
+            query = search.build_query(run.prompt_snapshot, branch)
+            results = await search.search_public_web(tenant_id, query)
             await ensure_active()
             await _status(db, run, "fetching")
             snapshots = await sources.fetch_sources(db, run_id, results)
             await ensure_active()
+            coverage["search"] = {
+                "provider": "Bing public web",
+                "query": query,
+                "result_count": len(results),
+                "fetched_count": len(snapshots),
+            }
         usable = [row for row in snapshots if row.excerpt]
         if len(usable) >= MIN_SOURCES_FOR_BRIEF and not _sources_are_relevant(
             usable, branch
@@ -399,10 +405,12 @@ async def handle_research(job, db: AsyncSession) -> dict:
             run.incorrect = payload.incorrect
             run.validation_status = "passed"
             run.evidence_coverage = {
+                **coverage,
                 "source_count": len(owned_rows),
                 "validated_claim_count": 1,
                 "unsupported_claim_count": 0,
                 "third_party_source_count": 0,
+                "owned_source_count": len(owned_rows),
             }
             run.source_count = len(owned_rows)
             run.validated_claim_count = 1
@@ -497,9 +505,12 @@ async def handle_research(job, db: AsyncSession) -> dict:
         run.incorrect = payload.incorrect
         run.validation_status = "partial" if unsupported_claims else "passed"
         run.evidence_coverage = {
+            **coverage,
             "source_count": len(usable),
             "validated_claim_count": validated_claims,
             "unsupported_claim_count": unsupported_claims,
+            "third_party_source_count": len(usable),
+            "owned_source_count": 0,
         }
         run.source_count = len(usable)
         run.validated_claim_count = validated_claims

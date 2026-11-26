@@ -6,6 +6,7 @@ import type { AiVisibilityRunDetail } from "@/lib/api-ai-visibility";
 import { safeHref } from "@/lib/safe-url";
 import ClaimLedger from "./ClaimLedger";
 import FixNextActions from "./FixNextActions";
+import ResearchProvenance from "./ResearchProvenance";
 
 const ANSWER_PREVIEW_CHARS = 600;
 
@@ -28,6 +29,16 @@ type Copy = {
   readFullAnswer: string;
   fullAnswer: string;
   close: string;
+  howSearched: string;
+  searchProvider: string;
+  searchQuery: string;
+  searchResults: string;
+  sourcesFetched: string;
+  thirdPartySources: string;
+  ownedSources: string;
+  socialNotChecked: string;
+  publishingChecklist: string;
+  publishingHint: string;
 };
 
 function Answer({
@@ -136,6 +147,11 @@ export default function DecisionBrief({
           );
         })}
       </section>
+      <ResearchProvenance
+        coverage={detail.evidence_coverage}
+        sources={detail.sources}
+        copy={copy}
+      />
       <section>
         <h3 className="ai-eyebrow mb-3">{copy.claimLedger}</h3>
         <ClaimLedger

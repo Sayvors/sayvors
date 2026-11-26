@@ -72,6 +72,12 @@ def build_query(prompt: str, branch: dict) -> str:
         str(branch.get("address") or branch.get("locality") or "").split()
     )
     remainder = " ".join(QUESTION_WORDS.sub(" ", prompt).split())
+    remainder = re.sub(r"[?.,!]+", " ", remainder)
+    remainder = " ".join(remainder.split())
+    # The branch name is already the leading phrase; do not repeat it because
+    # a model/user question often contains the name with punctuation.
+    if name and name.casefold() in remainder.casefold():
+        remainder = ""
     parts = [part for part in (name, remainder, locality) if part]
     if not parts:
         return normalize_query(prompt)
