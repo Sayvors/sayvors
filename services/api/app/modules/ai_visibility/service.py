@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import case, distinct, func, select
+from sqlalchemy import case, delete, distinct, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,7 +27,7 @@ MAX_ACTIVE_PROMPTS_PER_BRANCH = 100
 MAX_PROMPT_LIST = 200
 MAX_RUN_ATTEMPTS = 20
 ATTEMPT_WINDOW_SECONDS = 60 * 60
-RETRY_COOLDOWN_SECONDS = 60
+RETRY_COOLDOWN_SECONDS = 5
 ACTIVE_RUN_STATUSES = (
     "queued",
     "searching",
@@ -629,6 +629,22 @@ async def retry_run(
         locale=locale,
         depth=run.research_depth or "quick",
     )
+
+
+async def clear_terminal_runs(
+    db: AsyncSession, tenant_id: str, channel_id: str
+) -> int:
+    """Archive-free bulk cleanup of completed/failed research history."""
+    await _owned_channel(db, tenant_id, channel_id)
+    result = await db.execute(
+        delete(AiVisibilityRun).where(
+            AiVisibilityRun.tenant_id == tenant_id,
+            AiVisibilityRun.channel_id == channel_id,
+            AiVisibilityRun.status.not_in(ACTIVE_RUN_STATUSES),
+        )
+    )
+    await db.commit()
+    return int(result.rowcount or 0)
 
 
 async def delete_run(db: AsyncSession, tenant_id: str, run_id: str) -> bool:

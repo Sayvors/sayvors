@@ -2,7 +2,7 @@ const MESSAGES: Record<string, string> = {
   retry_limit_reached:
     "Research is busy for this question. A slot opens within an hour and your question is saved.",
   retry_cooldown:
-    "Research is cooling down for this question. Try again in about a minute.",
+    "Research is cooling down for this question. Try again in a few seconds.",
   tenant_search_rate_limited:
     "This workspace reached its research limit. Wait a minute and try again.",
   search_blocked:

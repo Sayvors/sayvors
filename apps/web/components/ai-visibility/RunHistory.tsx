@@ -8,6 +8,7 @@ import {
   fetchRun,
   fetchRuns,
   retryRun,
+  clearRuns,
   type AiVisibilityRunDetail,
   type AiVisibilityRunListItem,
 } from "@/lib/api-ai-visibility";
@@ -21,6 +22,8 @@ type Copy = {
   noRuns: string;
   retry: string;
   deleteRun: string;
+  clearHistory: string;
+  confirmClear: string;
   confirmDelete: string;
   comparePrevious: string;
   stages: Record<string, string>;
@@ -52,6 +55,7 @@ export default function RunHistory({
 }) {
   const [status, setStatus] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [comparison, setComparison] = useState<{
     current: AiVisibilityRunDetail;
@@ -93,6 +97,19 @@ export default function RunHistory({
     try {
       await deleteRun(deleting);
       setDeleting(null);
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.aiVisibility.all(),
+      });
+      onChanged();
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : copy.loadError);
+    }
+  };
+  const confirmClear = async () => {
+    setError(null);
+    try {
+      await clearRuns(channelId);
+      setClearing(false);
       await queryClient.invalidateQueries({
         queryKey: queryKeys.aiVisibility.all(),
       });
@@ -144,6 +161,14 @@ export default function RunHistory({
             {copy.stages.insufficient_evidence}
           </option>
         </select>
+        <button
+          type="button"
+          onClick={() => setClearing(true)}
+          disabled={query.data?.items.length === 0}
+          className="min-h-10 rounded-[var(--ai-radius-control)] border border-[var(--ai-line-strong)] px-3 text-[11px] font-bold text-[var(--ai-danger)] hover:bg-[var(--ai-sunken)]"
+        >
+          {copy.clearHistory}
+        </button>
       </div>
       {error && (
         <p role="alert" className="mt-3 rounded-[var(--ai-radius-control)] bg-[var(--ai-sunken)] px-3 py-2 text-[12px] text-[var(--ai-danger)]">
@@ -225,6 +250,22 @@ export default function RunHistory({
             className="rounded-[8px] bg-red-600 px-3.5 py-2 text-[12px] font-bold text-white"
           >
             {copy.deleteRun}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal open={clearing} onClose={() => setClearing(false)} title={copy.clearHistory}>
+        <p className="text-[13px]">{copy.confirmClear}</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" onClick={() => setClearing(false)}>
+            {copy.cancel}
+          </button>
+          <button
+            type="button"
+            onClick={() => void confirmClear()}
+            className="rounded-[8px] bg-red-600 px-3.5 py-2 text-[12px] font-bold text-white"
+          >
+            {copy.clearHistory}
           </button>
         </div>
       </Modal>

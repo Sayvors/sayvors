@@ -245,7 +245,7 @@ async def create_run(
         raise HTTPException(409, str(exc)) from exc
     except service.RetryCooldown as exc:
         raise HTTPException(
-            429, str(exc), headers={"Retry-After": "60"}
+            429, str(exc), headers={"Retry-After": "5"}
         ) from exc
     except service.RetryLimitReached as exc:
         raise HTTPException(
@@ -384,7 +384,7 @@ async def retry_run(
         raise HTTPException(409, str(exc)) from exc
     except service.RetryCooldown as exc:
         raise HTTPException(
-            429, str(exc), headers={"Retry-After": "60"}
+            429, str(exc), headers={"Retry-After": "5"}
         ) from exc
     except service.RetryLimitReached as exc:
         raise HTTPException(
@@ -393,6 +393,17 @@ async def retry_run(
     if row is None:
         raise HTTPException(404, "run_not_found")
     return _run_out(row)
+
+
+@router.delete("/runs", status_code=204)
+async def clear_runs(
+    channel_id: str = Query(min_length=1, max_length=36),
+    ctx: TenantContext = Depends(require_perm("ai.edit")),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    _authorize_channel(ctx, channel_id, write=True)
+    await service.clear_terminal_runs(db, ctx.tenant_id, channel_id)
+    return Response(status_code=204)
 
 
 @router.delete("/runs/{run_id}", status_code=204)

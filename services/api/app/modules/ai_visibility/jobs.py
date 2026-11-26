@@ -404,9 +404,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
                 "depth": run.research_depth or "quick",
             }
         usable = [row for row in snapshots if row.excerpt]
-        if len(usable) >= MIN_SOURCES_FOR_BRIEF and not _sources_are_relevant(
-            usable, branch
-        ):
+        if not _sources_are_relevant(usable, branch):
             query = str((coverage.get("search") or {}).get("query") or "").split(" | ")[0]
             try:
                 coverage["platforms"] = await search.discover_public_profiles(

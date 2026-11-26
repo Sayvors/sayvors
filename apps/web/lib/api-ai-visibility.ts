@@ -147,3 +147,8 @@ export const retryRun = (id: string) =>
 
 export const deleteRun = (id: string) =>
   apiFetch(`/api/v1/ai-visibility/runs/${encodeURIComponent(id)}`, { method: "DELETE" }) as Promise<void>;
+
+export const clearRuns = (channelId: string) =>
+  apiFetch(`/api/v1/ai-visibility/runs?${params({ channel_id: channelId })}`, {
+    method: "DELETE",
+  }) as Promise<void>;

@@ -70,6 +70,47 @@ async def _prompt(db, tenant_id, channel_id):
 
 
 @pytest.mark.asyncio
+async def test_clear_history_removes_terminal_runs_only(
+    client, db, user_id, channel_id
+):
+    prompt = await _prompt(db, user_id, channel_id)
+    old = datetime.now(timezone.utc) - timedelta(minutes=5)
+    terminal = AiVisibilityRun(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        prompt_id=prompt.id,
+        prompt_snapshot=prompt.prompt_text,
+        locale="en",
+        status="failed",
+        completed_at=old,
+    )
+    active = AiVisibilityRun(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        prompt_id=prompt.id,
+        prompt_snapshot=prompt.prompt_text,
+        locale="en",
+        status="queued",
+    )
+    db.add_all([terminal, active])
+    await db.commit()
+
+    response = client.delete(f"/api/v1/ai-visibility/runs?channel_id={channel_id}")
+    assert response.status_code == 204
+    await db.rollback()
+    assert (
+        await db.execute(
+            select(AiVisibilityRun).where(AiVisibilityRun.id == terminal.id)
+        )
+    ).scalar_one_or_none() is None
+    assert (
+        await db.execute(
+            select(AiVisibilityRun).where(AiVisibilityRun.id == active.id)
+        )
+    ).scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
 async def test_deep_run_persists_its_depth(client, db, user_id, channel_id):
     prompt = await _prompt(db, user_id, channel_id)
     response = client.post(

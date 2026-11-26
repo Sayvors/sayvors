@@ -233,6 +233,8 @@ const en = {
     sources: "Sources",
     retry: "Retry",
     deleteRun: "Delete run",
+    clearHistory: "Clear history",
+    confirmClear: "Delete every completed, failed, or insufficient research run? Active runs stay untouched.",
     confirmDelete: "Delete this research run and its source snapshots?",
     history: "Research history",
     historyEyebrow: "03 / History",

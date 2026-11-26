@@ -535,9 +535,13 @@ async def test_job_marks_insufficient_evidence(
     async def _fetch(_db, run_id, rows, **_kwargs):
         return []
 
+    async def _profiles(*_args, **_kwargs):
+        return []
+
     monkeypatch.setattr(jobs.search, "search_public_web", _search)
     monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
+    monkeypatch.setattr(jobs.search, "discover_public_profiles", _profiles)
     result = await jobs.handle_research(job, db)
     await db.refresh(run)
     assert result["status"] == "insufficient_evidence", run.error
-    assert run.status == "insufficient_evidence"
+    assert run.failure_code == "no_third_party_evidence"
