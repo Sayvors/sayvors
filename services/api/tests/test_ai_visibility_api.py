@@ -1,17 +1,47 @@
 """Prompt library API behavior and tenant isolation."""
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from app.modules.ai_visibility.models import AiVisibilityPrompt, AiVisibilityRun
+from app.modules.ai_visibility import batch_jobs
+from app.modules.ai_visibility.models import (
+    AiVisibilityPrompt,
+    AiVisibilityQuerySet,
+    AiVisibilityRun,
+)
+from app.modules.ai_visibility.questions import GeneratedQuestion
 from app.modules.channels.models import Channel
+from app.modules.jobs.models import Job
 
 
 @pytest.fixture(autouse=True)
 def _same_site(client):
     client.headers.update({"X-Requested-With": "XMLHttpRequest"})
+
+
+@pytest.fixture(autouse=True)
+def _funded_research(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.modules.ai_visibility import router
+
+    async def _allow(_tenant_id, _feature):
+        return None
+
+    async def _balance(_tenant_id):
+        return 10_000
+
+    async def _entitlements(_tenant_id, _db):
+        return SimpleNamespace(
+            max_quick_research_month=None, max_deep_research_month=None
+        )
+
+    monkeypatch.setattr(router, "check_feature", _allow)
+    monkeypatch.setattr(router, "get_balance", _balance)
+    monkeypatch.setattr(router, "get_entitlements", _entitlements)
 
 
 @pytest_asyncio.fixture
@@ -37,6 +67,116 @@ def _prompt_body(channel_id, *, text="Best coffee near Al Malqa"):
         "prompt_text": text,
         "intent": "discovery",
     }
+
+
+@pytest.mark.asyncio
+async def test_query_set_start_returns_202_and_is_idempotent(client, db, user_id, channel_id):
+    body = {"channel_id": channel_id, "depth": "quick"}
+    first = client.post("/api/v1/ai-visibility/query-sets", json=body)
+    assert first.status_code == 202, first.text
+    first_id = first.json()["id"]
+    assert first.json()["status"] == "generating"
+    second = client.post("/api/v1/ai-visibility/query-sets", json=body)
+    assert second.status_code == 202
+    assert second.json()["id"] == first_id
+    rows = (await db.execute(select(AiVisibilityQuerySet))).scalars().all()
+    assert len(rows) == 1
+
+    latest = client.get(f"/api/v1/ai-visibility/query-sets/latest?channel_id={channel_id}")
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["query_set"]["id"] == first_id
+    assert latest.json()["questions"] == []
+
+
+@pytest.mark.asyncio
+async def test_latest_query_set_includes_generated_questions_and_outcomes(
+    client, db, user_id, channel_id, monkeypatch
+):
+    created = client.post(
+        "/api/v1/ai-visibility/query-sets",
+        json={"channel_id": channel_id, "depth": "quick"},
+    )
+    query_set_id = created.json()["id"]
+    query_set = await db.get(AiVisibilityQuerySet, query_set_id)
+    job = await db.get(Job, query_set.job_id)
+    job.status = "running"
+    job.lease_owner = "worker-1"
+    job.lease_expires_at = datetime.now(timezone.utc).replace(year=2099)
+    await db.commit()
+
+    async def _profile(*_args):
+        return {
+            "name": "Sayvors Branch",
+            "categories": {"primary": "Recruitment office"},
+            "description": "Recruitment services",
+            "address": "Makkah",
+            "locality": "Makkah",
+        }
+
+    async def _questions(*_args, **_kwargs):
+        return [
+            GeneratedQuestion(
+                question_text="Is Sayvors licensed in Makkah?",
+                language="en",
+                intent="licensing",
+                industry_relevance=90,
+                service_relevance=95,
+                geographic_context="Makkah",
+                business_relevance_score=92,
+                priority="P1",
+            )
+        ]
+
+    monkeypatch.setattr(batch_jobs.profile, "load_business_profile", _profile)
+    monkeypatch.setattr(batch_jobs.questions, "generate_questions", _questions)
+    await batch_jobs.handle_query_set(job, db)
+    run = (
+        await db.execute(select(AiVisibilityRun).where(AiVisibilityRun.query_set_id == query_set_id))
+    ).scalar_one()
+    run.status = "completed"
+    run.mentioned = True
+    run.cited = True
+    run.recommended = False
+    run.source_count = 2
+    run.validated_claim_count = 1
+    run.evidence_coverage = {"third_party_source_count": 2, "owned_source_count": 0}
+    run.completed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    latest = client.get(f"/api/v1/ai-visibility/query-sets/latest?channel_id={channel_id}")
+    assert latest.status_code == 200, latest.text
+    payload = latest.json()
+    assert payload["questions"][0]["question_text"] == "Is Sayvors licensed in Makkah?"
+    assert payload["questions"][0]["mentioned"] is True
+    assert payload["metrics"]["mention_rate"] == 100.0
+    assert payload["coverage"]["third_party_source_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_latest_query_set_returns_404_before_research(client, channel_id):
+    response = client.get(f"/api/v1/ai-visibility/query-sets/latest?channel_id={channel_id}")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "query_set_not_found"
+
+
+@pytest.mark.asyncio
+async def test_query_set_api_rejects_other_tenant_channel(client, db, other_user_id):
+    db.add(
+        Channel(
+            id="other-query-channel",
+            user_id=other_user_id,
+            platform="google_reviews",
+            platform_user_id="other-query-location",
+            display_name="Other",
+        )
+    )
+    await db.commit()
+    response = client.post(
+        "/api/v1/ai-visibility/query-sets",
+        json={"channel_id": "other-query-channel", "depth": "quick"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "channel_not_found"
 
 
 @pytest.mark.asyncio

@@ -133,3 +133,71 @@ class RunDetailOut(RunOut):
     actions: list
     sources: list[SourceOut]
     completed_at: str | None
+
+
+class QuerySetStartIn(BaseModel):
+    channel_id: str = Field(min_length=1, max_length=36)
+    depth: Literal["quick", "deep"] = "quick"
+
+
+class QuerySetOut(BaseModel):
+    id: str
+    channel_id: str
+    version: int
+    parent_query_set_id: str | None
+    status: str
+    phase: str | None
+    depth: str
+    job_id: str | None
+    classification: dict
+    total_questions: int
+    completed_questions: int
+    failed_questions: int
+    failure_code: str | None
+    error: str | None
+    started_at: str | None
+    completed_at: str | None
+    created_at: str
+    updated_at: str
+
+
+class QueryQuestionOut(BaseModel):
+    id: str
+    query_set_id: str
+    version: int
+    question_key: str
+    question_text: str
+    language: str
+    customer_intent: str
+    industry_relevance: int
+    service_relevance: int
+    geographic_context: str | None
+    business_relevance_score: int
+    research_priority: str
+    origin: str
+    status: str
+    run_id: str | None
+    mentioned: bool | None
+    cited: bool | None
+    recommended: bool | None
+    incorrect: bool | None
+
+
+class QuerySetVersionOut(BaseModel):
+    id: str
+    version: int
+    status: str
+    total_questions: int
+    completed_questions: int
+    failed_questions: int
+    created_at: str
+    completed_at: str | None
+
+
+class QuerySetLatestOut(BaseModel):
+    query_set: QuerySetOut
+    questions: list[QueryQuestionOut]
+    versions: list[QuerySetVersionOut]
+    metrics: dict
+    coverage: dict
+

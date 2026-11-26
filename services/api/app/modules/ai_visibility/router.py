@@ -13,7 +13,7 @@ from ..team.context import (
     TenantContext,
     require_perm,
 )
-from . import service
+from . import query_sets, service
 from .models import AiVisibilityPrompt
 from .schemas import (
     OverviewOut,
@@ -21,6 +21,9 @@ from .schemas import (
     PromptListOut,
     PromptOut,
     PromptPatch,
+    QuerySetLatestOut,
+    QuerySetOut,
+    QuerySetStartIn,
     RunDetailOut,
     RunIn,
     RunListItem,
@@ -95,8 +98,51 @@ async def _preflight_research(
         raise HTTPException(402, "insufficient_ai_credits")
 
 
-def _out(row: AiVisibilityPrompt) -> PromptOut:
-    return PromptOut(
+@router.post("/query-sets", response_model=QuerySetOut, status_code=202)
+async def start_query_set(
+    body: QuerySetStartIn,
+    ctx: TenantContext = Depends(require_perm("ai.edit")),
+    db: AsyncSession = Depends(get_db),
+) -> QuerySetOut:
+    _authorize_channel(ctx, body.channel_id, write=True)
+    if not settings.TESTING and not await rate_limit(
+        f"ai-vis:query-set:{ctx.tenant_id}",
+        RUN_CREATE_RATE_LIMIT,
+        RUN_CREATE_RATE_WINDOW_SECONDS,
+        fail_closed=True,
+    ):
+        raise HTTPException(429, "too_many_requests")
+    await _preflight_research(ctx, db, body.depth)
+    try:
+        row = await query_sets.start_query_set(
+            db, ctx.tenant_id, body.channel_id, depth=body.depth
+        )
+    except ValueError as exc:
+        if str(exc) == "channel_not_owned":
+            raise HTTPException(404, "channel_not_found") from exc
+        raise
+    return QuerySetOut(**query_sets.query_set_payload(row))
+
+
+@router.get("/query-sets/latest", response_model=QuerySetLatestOut)
+async def latest_query_set(
+    channel_id: str = Query(min_length=1, max_length=36),
+    ctx: TenantContext = Depends(require_perm("analytics.view")),
+    db: AsyncSession = Depends(get_db),
+) -> QuerySetLatestOut:
+    _authorize_channel(ctx, channel_id, write=False)
+    try:
+        payload = await query_sets.latest_query_set(db, ctx.tenant_id, channel_id)
+    except ValueError as exc:
+        if str(exc) == "channel_not_owned":
+            raise HTTPException(404, "channel_not_found") from exc
+        raise
+    if payload is None:
+        raise HTTPException(404, "query_set_not_found")
+    return QuerySetLatestOut(**payload)
+
+
+def _out(row: AiVisibilityPrompt) -> PromptOut:    return PromptOut(
         id=row.id,
         channel_id=row.channel_id,
         title=row.title,
