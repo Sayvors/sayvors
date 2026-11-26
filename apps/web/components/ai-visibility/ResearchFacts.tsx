@@ -2,13 +2,11 @@ import type { Dict } from "@/lib/i18n/en";
 
 type Copy = Dict["aiVisibility"];
 
-type StatCard = {
+type EvidenceCard = {
   key: string;
-  raw: number;
-  value: string;
+  value: number;
   label: string;
   caption: string;
-  primary: boolean;
 };
 
 function num(source: Record<string, unknown>, key: string): number | null {
@@ -19,10 +17,10 @@ function num(source: Record<string, unknown>, key: string): number | null {
 }
 
 /**
- * The measurable output of one research run: how much of the public web was
- * actually looked at, not an engagement score. Every number comes from the
- * run's stored evidence metrics; a run predating these counters shows no
- * rail rather than an invented one.
+ * Owner-first evidence summary. Search candidates are deliberately not shown
+ * here: a search engine returning ten generic pages is not the same as ten
+ * websites mentioning the business. Only actual evidence counts toward the
+ * big numbers and the chart.
  */
 export default function ResearchFacts({
   coverage,
@@ -34,161 +32,84 @@ export default function ResearchFacts({
   const metrics =
     coverage.metrics && typeof coverage.metrics === "object"
       ? (coverage.metrics as Record<string, unknown>)
-      : null;
-  if (!metrics) return null;
+      : {};
+  const independent = num(coverage, "third_party_source_count");
+  const owned = num(coverage, "owned_source_count");
+  const profiles = num(metrics, "platforms_found");
+  const verified = num(coverage, "validated_claim_count");
 
-  const platforms = Array.isArray(coverage.platforms)
-    ? coverage.platforms.length
-    : null;
-  const cards: StatCard[] = [];
-  const push = (
-    key: string,
-    value: number | null,
-    label: string,
-    caption: string,
-    primary: boolean,
-  ) => {
-    if (value !== null) {
-      cards.push({
-        key,
-        raw: value,
-        value: value.toLocaleString(),
-        label,
-        caption,
-        primary,
-      });
-    }
-  };
-
-  push(
-    "candidates_found",
-    num(metrics, "candidates_found"),
-    copy.facts.pagesFound,
-    copy.facts.pagesFoundCaption,
-    true,
-  );
-  push(
-    "domains_found",
-    num(metrics, "domains_found"),
-    copy.facts.domainsFound,
-    copy.facts.domainsFoundCaption,
-    true,
-  );
-  push(
-    "brand_mentions",
-    num(metrics, "brand_mentions"),
-    copy.facts.mentionsFound,
-    copy.facts.mentionsFoundCaption,
-    true,
-  );
-  if (platforms !== null && platforms > 0) {
-    const found = num(metrics, "platforms_found") ?? 0;
+  const cards: EvidenceCard[] = [];
+  if (independent !== null) {
     cards.push({
-      key: "platforms",
-      raw: platforms,
-      value: platforms.toLocaleString(),
-      label: copy.facts.platformsChecked,
-      caption: `${copy.facts.platformsFound} ${found}`,
-      primary: true,
+      key: "independent",
+      value: independent,
+      label: copy.facts.independentMentions,
+      caption: copy.facts.independentMentionsCaption,
     });
   }
-  push(
-    "pages_read",
-    num(metrics, "pages_read"),
-    copy.facts.pagesRead,
-    (num(metrics, "pages_failed") ?? 0) > 0
-      ? `${copy.facts.pagesReadFailed} ${num(metrics, "pages_failed")}`
-      : copy.facts.pagesReadCaption,
-    false,
-  );
-  push(
-    "links_found",
-    num(metrics, "links_found"),
-    copy.facts.linksFound,
-    copy.facts.linksFoundCaption,
-    false,
-  );
-  push(
-    "words_read",
-    num(metrics, "words_read"),
-    copy.facts.wordsRead,
-    copy.facts.wordsReadCaption,
-    false,
-  );
-  push(
-    "claims_verified",
-    num(coverage, "validated_claim_count"),
-    copy.facts.claimsVerified,
-    copy.facts.claimsVerifiedCaption,
-    false,
-  );
+  if (owned !== null) {
+    cards.push({
+      key: "owned",
+      value: owned,
+      label: copy.facts.ownedPages,
+      caption: copy.facts.ownedPagesCaption,
+    });
+  }
+  if (profiles !== null) {
+    cards.push({
+      key: "profiles",
+      value: profiles,
+      label: copy.facts.publicProfiles,
+      caption: copy.facts.publicProfilesCaption,
+    });
+  }
+  if (verified !== null) {
+    cards.push({
+      key: "verified",
+      value: verified,
+      label: copy.facts.verifiedFacts,
+      caption: copy.facts.verifiedFactsCaption,
+    });
+  }
 
   if (cards.length === 0) return null;
-  const primary = cards.filter((card) => card.primary);
-  const secondary = cards.filter((card) => !card.primary);
-  const chartKeys = new Set([
-    "candidates_found",
-    "pages_read",
-    "domains_found",
-    "brand_mentions",
-    "platforms",
-  ]);
-  const chartRows = cards.filter((card) => chartKeys.has(card.key));
-  const chartMax = Math.max(1, ...chartRows.map((card) => card.raw));
-  const showChart = chartRows.some((card) => card.raw > 0);
+  const chartRows = cards.filter((card) => card.key !== "verified");
+  const chartMax = Math.max(1, ...chartRows.map((card) => card.value));
+  const note =
+    independent === 0
+      ? copy.facts.noIndependentNote
+      : independent !== null
+        ? copy.facts.independentNote(independent)
+        : copy.facts.noEvidenceNote;
 
   return (
     <section aria-label={copy.facts.title} className="space-y-3">
-      <p className="ai-eyebrow">{copy.facts.title}</p>
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <p className="ai-eyebrow">{copy.facts.title}</p>
+        <p className="max-w-xl text-[11px] leading-5 text-[var(--ai-muted)]">{note}</p>
+      </div>
       <div className="overflow-hidden rounded-[var(--ai-radius-panel)] border border-[var(--ai-line)] bg-[var(--ai-line)] shadow-[var(--ai-shadow-panel)]">
         <dl className="grid grid-cols-2 gap-px sm:grid-cols-4">
-          {primary.map((card) => {
-            const muted = card.raw === 0;
-            return (
-              <div key={card.key} className="bg-[var(--ai-surface)] px-4 py-5">
-                <dt className="text-[11px] font-semibold leading-4 text-[var(--ai-muted)]">
-                  {card.label}
-                </dt>
-                <dd
-                  className={`mt-2 font-mono text-[34px] font-bold leading-none tracking-tight ${
-                    muted ? "text-[var(--ai-muted)]" : "text-[var(--ai-ink)]"
-                  }`}
-                >
-                  {card.value}
-                </dd>
-                <p className="mt-2 text-[11px] leading-4 text-[var(--ai-muted)]">
-                  {card.caption}
-                </p>
-              </div>
-            );
-          })}
+          {cards.map((card) => (
+            <div key={card.key} className="bg-[var(--ai-surface)] px-4 py-5">
+              <dt className="text-[11px] font-semibold leading-4 text-[var(--ai-muted)]">
+                {card.label}
+              </dt>
+              <dd
+                className={`mt-2 font-mono text-[34px] font-bold leading-none tracking-tight ${
+                  card.value === 0 ? "text-[var(--ai-muted)]" : "text-[var(--ai-ink)]"
+                }`}
+              >
+                {card.value.toLocaleString()}
+              </dd>
+              <p className="mt-2 text-[11px] leading-4 text-[var(--ai-muted)]">
+                {card.caption}
+              </p>
+            </div>
+          ))}
         </dl>
-        {secondary.length > 0 && (
-          <dl className="grid grid-cols-2 gap-px border-t border-[var(--ai-line)] sm:grid-cols-4">
-            {secondary.map((card) => {
-              const muted = card.raw === 0;
-              return (
-                <div key={card.key} className="bg-[var(--ai-sunken)] px-4 py-3">
-                  <dt className="text-[10px] font-bold uppercase tracking-wide text-[var(--ai-muted)]">
-                    {card.label}
-                  </dt>
-                  <dd
-                    className={`mt-1 font-mono text-[20px] font-bold leading-none ${
-                      muted ? "text-[var(--ai-muted)]" : "text-[var(--ai-ink-2)]"
-                    }`}
-                  >
-                    {card.value}
-                  </dd>
-                  <p className="mt-1 text-[10px] leading-4 text-[var(--ai-muted)]">
-                    {card.caption}
-                  </p>
-                </div>
-              );
-            })}
-          </dl>
-        )}
       </div>
-      {showChart && (
+      {chartRows.length > 0 && (
         <div className="border-t border-[var(--ai-line)] pt-3">
           <p className="text-[11px] font-bold text-[var(--ai-ink-2)]">
             {copy.facts.chartTitle}
@@ -199,13 +120,13 @@ export default function ResearchFacts({
                 <div className="flex items-center justify-between gap-3 text-[10px]">
                   <span className="text-[var(--ai-muted)]">{row.label}</span>
                   <span className="font-mono font-bold text-[var(--ai-ink-2)]">
-                    {row.value}
+                    {row.value.toLocaleString()}
                   </span>
                 </div>
                 <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--ai-sunken)]">
                   <div
                     className="h-full rounded-full bg-[var(--ai-accent)]"
-                    style={{ width: `${(row.raw / chartMax) * 100}%` }}
+                    style={{ width: `${(row.value / chartMax) * 100}%` }}
                   />
                 </div>
               </li>

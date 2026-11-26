@@ -161,6 +161,8 @@ async def test_job_completes_with_validated_brief(
     assert metrics["links_found"] == 17
     assert metrics["domains_found"] == 3
     assert metrics["brand_mentions"] == 2
+    assert run.evidence_coverage["third_party_source_count"] == 2
+    assert run.evidence_coverage["owned_source_count"] == 0
 
 
 @pytest.mark.asyncio

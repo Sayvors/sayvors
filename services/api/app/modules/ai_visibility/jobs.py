@@ -785,8 +785,8 @@ async def handle_research(job, db: AsyncSession) -> dict:
             "source_count": len(usable),
             "validated_claim_count": validated_claims,
             "unsupported_claim_count": unsupported_claims,
-            "third_party_source_count": len(usable),
-            "owned_source_count": 0,
+            "third_party_source_count": len(independent_usable),
+            "owned_source_count": len(owned_usable),
         }
         run.source_count = len(usable)
         run.validated_claim_count = validated_claims
