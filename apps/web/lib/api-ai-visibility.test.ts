@@ -12,7 +12,9 @@ import {
   fetchPrompts,
   fetchRun,
   fetchRuns,
+  fetchLatestQuerySet,
   retryRun,
+  startQuerySet,
   updatePrompt,
 } from "./api-ai-visibility";
 
@@ -65,8 +67,21 @@ describe("AI visibility API", () => {
     );
   });
 
-  it("posts prompts and runs with JSON bodies", async () => {
-    const prompt = {
+  it("starts background query sets and reads the latest aggregate", async () => {
+    await startQuerySet({ channel_id: "branch-1", depth: "quick" });
+    await fetchLatestQuerySet("branch / 1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/v1/ai-visibility/query-sets", {
+      method: "POST",
+      body: JSON.stringify({ channel_id: "branch-1", depth: "quick" }),
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/ai-visibility/query-sets/latest?channel_id=branch+%2F+1",
+    );
+  });
+
+  it("posts prompts and runs with JSON bodies", async () => {    const prompt = {
       channel_id: "branch-1",
       title: "Coffee",
       prompt_text: "Best coffee near Malqa",

@@ -87,5 +87,6 @@ export const queryKeys = {
     runs: (channelId: string, status: string, promptId: string, limit: number, offset: number) =>
       ["ai-visibility", "runs", channelId, status, promptId, limit, offset] as const,
     detail: (runId: string) => ["ai-visibility", "run", runId] as const,
+    latestQuerySet: (channelId: string) => ["ai-visibility", "query-set", "latest", channelId] as const,
   },
 };

@@ -152,3 +152,80 @@ export const clearRuns = (channelId: string) =>
   apiFetch(`/api/v1/ai-visibility/runs?${params({ channel_id: channelId })}`, {
     method: "DELETE",
   }) as Promise<void>;
+
+export type AiVisibilityQuerySet = {
+  id: string;
+  channel_id: string;
+  version: number;
+  parent_query_set_id: string | null;
+  status: string;
+  phase: string | null;
+  depth: string;
+  job_id: string | null;
+  classification: Record<string, unknown>;
+  total_questions: number;
+  completed_questions: number;
+  failed_questions: number;
+  failure_code: string | null;
+  error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AiVisibilityGeneratedQuestion = {
+  id: string;
+  query_set_id: string;
+  version: number;
+  question_key: string;
+  question_text: string;
+  language: string;
+  customer_intent: string;
+  industry_relevance: number;
+  service_relevance: number;
+  geographic_context: string | null;
+  business_relevance_score: number;
+  research_priority: string;
+  origin: string;
+  status: string;
+  run_id: string | null;
+  mentioned: boolean | null;
+  cited: boolean | null;
+  recommended: boolean | null;
+  incorrect: boolean | null;
+};
+
+export type AiVisibilityQuerySetLatest = {
+  query_set: AiVisibilityQuerySet;
+  questions: AiVisibilityGeneratedQuestion[];
+  versions: Array<{
+    id: string;
+    version: number;
+    status: string;
+    total_questions: number;
+    completed_questions: number;
+    failed_questions: number;
+    created_at: string;
+    completed_at: string | null;
+  }>;
+  metrics: {
+    completed_runs: number;
+    mention_rate: number | null;
+    citation_rate: number | null;
+    recommendation_rate: number | null;
+    source_count: number;
+    validated_claim_count: number;
+  };
+  coverage: Record<string, unknown>;
+};
+
+export const startQuerySet = (body: { channel_id: string; depth?: "quick" | "deep" }) =>
+  apiFetch("/api/v1/ai-visibility/query-sets", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }) as Promise<AiVisibilityQuerySet>;
+
+export const fetchLatestQuerySet = (channelId: string) =>
+  apiFetch(`/api/v1/ai-visibility/query-sets/latest?${params({ channel_id: channelId })}`) as Promise<AiVisibilityQuerySetLatest>;
+

@@ -2,11 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
-  createPrompt: vi.fn(),
-  createRun: vi.fn(),
-  fetchOverview: vi.fn(),
-  fetchPrompts: vi.fn(),
-  fetchRuns: vi.fn(),
+  startQuerySet: vi.fn(),
+  fetchLatestQuerySet: vi.fn(),
+  fetchRun: vi.fn(),
+  retryRun: vi.fn(),
 }));
 const channels = vi.hoisted(() => ({ value: [] as Array<{ id: string; label: string }> }));
 const query = vi.hoisted(() => ({ invalidateQueries: vi.fn() }));
@@ -31,126 +30,136 @@ vi.mock("@/lib/i18n/I18nProvider", async () => {
 import { useQuery } from "@tanstack/react-query";
 import AiVisibilityPage from "./AiVisibilityPage";
 
-const prompt = {
-  id: "prompt-1",
-  channel_id: "branch-1",
-  title: "Visibility check",
-  prompt_text: "How visible is Acme Coffee?",
-  intent: "visibility",
-  is_active: true,
-  created_at: "2026-11-25T00:00:00Z",
-  updated_at: "2026-11-25T00:00:00Z",
+const latestData = {
+  query_set: {
+    id: "qs-1",
+    channel_id: "branch-1",
+    version: 1,
+    parent_query_set_id: null,
+    status: "completed",
+    phase: "complete",
+    depth: "quick",
+    job_id: "job-1",
+    classification: { industry: "recruitment", business_type: "recruitment", confidence: 0.9, uncertainties: [] },
+    total_questions: 1,
+    completed_questions: 1,
+    failed_questions: 0,
+    failure_code: null,
+    error: null,
+    started_at: "2026-11-26T10:00:00Z",
+    completed_at: "2026-11-26T10:01:00Z",
+    created_at: "2026-11-26T10:00:00Z",
+    updated_at: "2026-11-26T10:01:00Z",
+  },
+  questions: [
+    {
+      id: "question-1",
+      query_set_id: "qs-1",
+      version: 1,
+      question_key: "q001",
+      question_text: "Is Sayvors licensed in Makkah?",
+      language: "en",
+      customer_intent: "licensing",
+      industry_relevance: 90,
+      service_relevance: 95,
+      geographic_context: "Makkah",
+      business_relevance_score: 92,
+      research_priority: "P1",
+      origin: "initial",
+      status: "completed",
+      run_id: "run-1",
+      mentioned: true,
+      cited: true,
+      recommended: false,
+      incorrect: false,
+    },
+  ],
+  versions: [
+    { id: "qs-1", version: 1, status: "completed", total_questions: 1, completed_questions: 1, failed_questions: 0, created_at: "2026-11-26T10:00:00Z", completed_at: "2026-11-26T10:01:00Z" },
+  ],
+  metrics: {
+    completed_runs: 1,
+    mention_rate: 100,
+    citation_rate: 100,
+    recommendation_rate: 0,
+    source_count: 2,
+    validated_claim_count: 1,
+  },
+  coverage: {
+    third_party_source_count: 2,
+    owned_source_count: 0,
+    validated_claim_count: 1,
+    metrics: { platforms_found: 0 },
+  },
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   channels.value = [];
   query.invalidateQueries.mockResolvedValue(undefined);
-  api.fetchOverview.mockResolvedValue({
-    completed_runs: 0,
-    mention_rate: null,
-    citation_rate: null,
-    recommendation_rate: null,
-    active_prompts: 0,
-    covered_prompts: 0,
-    prompt_coverage: null,
-    failed_runs: 0,
-    insufficient_runs: 0,
-    source_count: 0,
-    validated_claim_count: 0,
-  });
-  api.fetchPrompts.mockResolvedValue({ items: [] });
-  api.fetchRuns.mockResolvedValue({ items: [], total: 0 });
-  api.createRun.mockResolvedValue({ id: "run-1", status: "queued" });
-  api.createPrompt.mockResolvedValue(prompt);
-  vi.mocked(useQuery).mockImplementation(({ queryKey }) => {
-    if (queryKey[1] === "overview") {
-      return {
-        data: { mention_rate: null, citation_rate: null, recommendation_rate: null },
-        isPending: false,
-        isError: false,
-      } as never;
-    }
-    if (queryKey[1] === "prompts") {
-      return { data: { items: [] }, isPending: false } as never;
-    }
-    if (queryKey[1] === "runs") {
-      return { data: { items: [], total: 0 }, isPending: false } as never;
-    }
-    return { data: undefined, isPending: true } as never;
-  });
+  api.fetchLatestQuerySet.mockResolvedValue(latestData);
+  api.startQuerySet.mockResolvedValue({ id: "qs-2", status: "generating" });
+  vi.mocked(useQuery).mockReturnValue({
+    data: latestData,
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  } as never);
 });
 
 describe("AiVisibilityPage", () => {
   it("asks for a connected branch when none exists", () => {
     render(<AiVisibilityPage />);
     expect(screen.getByText(/Connect a Google location/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Connect a location" })).toHaveAttribute(
-      "href",
-      "/dashboard/locations",
-    );
+    expect(screen.getByRole("link", { name: "Connect a location" })).toHaveAttribute("href", "/dashboard/locations");
   });
 
-  it("renders summary metrics while the overview is pending", () => {
-    channels.value = [{ id: "branch-1", label: "Acme Coffee" }];
-    vi.mocked(useQuery).mockImplementation(({ queryKey }) => {
-      if (queryKey[1] === "overview") {
-        return { data: undefined, isPending: true, isError: false } as never;
-      }
-      if (queryKey[1] === "prompts") {
-        return { data: { items: [] }, isPending: false } as never;
-      }
-      if (queryKey[1] === "runs") {
-        return { data: { items: [], total: 0 }, isPending: false } as never;
-      }
-      return { data: undefined, isPending: true } as never;
-    });
-
+  it("shows the empty state when no research exists", () => {
+    channels.value = [{ id: "branch-1", label: "Sayvors Branch" }];
+    vi.mocked(useQuery).mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      error: new Error("query_set_not_found"),
+      refetch: vi.fn(),
+    } as never);
     render(<AiVisibilityPage />);
-    expect(screen.getByLabelText("Evidence coverage")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByText("No research yet")).toBeInTheDocument();
   });
 
-  it("shows one clear research action without prompt library clutter", () => {
-    channels.value = [{ id: "branch-1", label: "Acme Coffee" }];
-    render(<AiVisibilityPage />);
-
-    expect(screen.getByRole("button", { name: "Research my branch" })).toBeInTheDocument();
-    expect(screen.queryByText("Prompt library")).not.toBeInTheDocument();
-    expect(screen.queryByText("Research history")).not.toBeInTheDocument();
-    const overviewCall = vi
-      .mocked(useQuery)
-      .mock.calls.find(([options]) => options.queryKey[1] === "overview");
-    expect(overviewCall?.[0].staleTime).toBe(30_000);
-  });
-
-  it("researches the branch with one click using an existing prompt", async () => {
-    channels.value = [{ id: "branch-1", label: "Acme Coffee" }];
-    vi.mocked(useQuery).mockImplementation(({ queryKey }) => {
-      if (queryKey[1] === "overview") {
-        return {
-          data: { mention_rate: null, citation_rate: null, recommendation_rate: null },
-          isPending: false,
-          isError: false,
-        } as never;
-      }
-      if (queryKey[1] === "prompts") {
-        return { data: { items: [prompt] }, isPending: false } as never;
-      }
-      if (queryKey[1] === "runs") {
-        return { data: { items: [], total: 0 }, isPending: false } as never;
-      }
-      return { data: undefined, isPending: true } as never;
-    });
-
+  it("starts background research with one click and never creates a fixed prompt", async () => {
+    channels.value = [{ id: "branch-1", label: "Sayvors Branch" }];
     render(<AiVisibilityPage />);
     fireEvent.click(screen.getByRole("button", { name: "Research my branch" }));
     await waitFor(() =>
-      expect(api.createRun).toHaveBeenCalledWith({
-        channel_id: "branch-1",
-        prompt_id: "prompt-1",
-        depth: "quick",
-      }),
+      expect(api.startQuerySet).toHaveBeenCalledWith({ channel_id: "branch-1", depth: "quick" }),
     );
-    expect(api.createPrompt).not.toHaveBeenCalled();
+    await waitFor(() => expect(query.invalidateQueries).toHaveBeenCalled());
+    expect(screen.queryByText("Prompt library")).not.toBeInTheDocument();
+  });
+
+  it("shows a non-blocking background banner while the set is running", () => {
+    channels.value = [{ id: "branch-1", label: "Sayvors Branch" }];
+    const running = {
+      ...latestData,
+      query_set: { ...latestData.query_set, status: "running", phase: "researching", completed_questions: 0, completed_at: null },
+      questions: [],
+      metrics: { ...latestData.metrics, completed_runs: 0, mention_rate: null, citation_rate: null, recommendation_rate: null },
+    };
+    vi.mocked(useQuery).mockReturnValue({ data: running, isPending: false, isError: false } as never);
+    render(<AiVisibilityPage />);
+    expect(screen.getByText("Research in progress")).toBeInTheDocument();
+    expect(screen.getByText(/You can leave this page and come back later/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Research activity")).not.toBeInTheDocument();
+  });
+
+  it("renders owner-first cards, intent chart, and customer question results", () => {
+    channels.value = [{ id: "branch-1", label: "Sayvors Branch" }];
+    render(<AiVisibilityPage />);
+    expect(screen.getByLabelText("Public visibility")).toBeInTheDocument();
+    expect(screen.getByLabelText("Customer intent coverage")).toBeInTheDocument();
+    expect(screen.getByText("Is Sayvors licensed in Makkah?")).toBeInTheDocument();
+    expect(screen.queryByText("Prompt library")).not.toBeInTheDocument();
   });
 });
