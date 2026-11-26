@@ -143,6 +143,45 @@ def test_parse_response_recovers_json_after_prose_with_braces():
     assert parsed.answer == payload["answer"]
 
 
+def test_parse_response_accepts_missing_model_outcomes():
+    parsed = research.parse_response(
+        json.dumps({
+            "answer": "Acme is nearby [S1].",
+            "claims": [{
+                "claim": "Acme is nearby",
+                "quote": "Acme is nearby",
+                "source_ids": ["S1"],
+            }],
+        }),
+        [_source("src-1", "Acme is nearby.")],
+    )
+    assert parsed.mentioned is False
+    assert parsed.claims[0].status == "unsupported"
+
+
+def test_parse_response_coerces_source_id_string_and_trailing_comma():
+    parsed = research.parse_response(
+        '{"answer":"Acme is nearby [S1].","claims":['
+        '{"claim":"Acme is nearby","quote":"Acme is nearby",'
+        '"source_ids":"S1","status":"supported",},],}',
+        [_source("src-1", "Acme is nearby.")],
+    )
+    assert parsed.claims[0].source_ids == ["S1"]
+
+
+def test_parse_response_unwraps_double_encoded_json():
+    inner = json.dumps({
+        "answer": "Acme is nearby [S1].",
+        "claims": [],
+        "mentioned": False,
+        "cited": False,
+        "recommended": False,
+        "incorrect": False,
+    })
+    parsed = research.parse_response(json.dumps(inner), [_source("src-1", "Acme is nearby.")])
+    assert parsed.answer == "Acme is nearby [S1]."
+
+
 def test_response_collections_are_hard_bounded():
     claim = {
         "claim": "Acme is nearby",

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..llm.gateway import LLMMessage
@@ -21,6 +22,7 @@ MAX_TOTAL_SOURCE_CHARS = 60_000
 RESEARCH_TEMPERATURE = 0.2
 RESEARCH_MAX_TOKENS = 6000
 RESEARCH_PURPOSE = "ai_visibility_research"
+logger = logging.getLogger(__name__)
 
 
 class ResearchClaim(BaseModel):
@@ -30,6 +32,24 @@ class ResearchClaim(BaseModel):
         default_factory=list, max_length=MAX_SOURCE_IDS_PER_ITEM
     )
     status: Literal["supported", "unsupported", "contradicted"] = "unsupported"
+
+    @field_validator("source_ids", mode="before")
+    @classmethod
+    def coerce_source_ids(cls, value: object) -> object:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return value
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def coerce_status(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            if normalized in {"supported", "unsupported", "contradicted"}:
+                return normalized
+        return "unsupported"
 
 
 class CompetitorMention(BaseModel):
@@ -54,10 +74,10 @@ class ResearchPayload(BaseModel):
     claims: list[ResearchClaim] = Field(
         default_factory=list, max_length=MAX_RESEARCH_CLAIMS
     )
-    mentioned: bool
-    cited: bool
-    recommended: bool
-    incorrect: bool
+    mentioned: bool = False
+    cited: bool = False
+    recommended: bool = False
+    incorrect: bool = False
     competitors: list[CompetitorMention] = Field(
         default_factory=list, max_length=MAX_COMPETITOR_MENTIONS
     )
@@ -116,17 +136,23 @@ def _decode_json_object(content: str) -> dict:
     """Accept a bare JSON object or one wrapped in model prose/fences."""
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.I)
     try:
-        return json.loads(cleaned)
+        value = json.loads(cleaned)
+        if isinstance(value, str):
+            return _decode_json_object(value)
+        if isinstance(value, dict):
+            return value
     except (TypeError, ValueError):
-        decoder = json.JSONDecoder()
-        # Try each object opening: model prefaces often contain illustrative
-        # braces that are not part of the payload. raw_decode ignores trailing
-        # prose after the object.
-        for index, character in enumerate(cleaned):
+        pass
+
+    # A nearby comma is a common model typo; repair only as a fallback.
+    repaired = re.sub(r",\s*([}\]])", r"\1", cleaned)
+    decoder = json.JSONDecoder()
+    for candidate in (cleaned, repaired):
+        for index, character in enumerate(candidate):
             if character != "{":
                 continue
             try:
-                value = decoder.raw_decode(cleaned[index:])[0]
+                value = decoder.raw_decode(candidate[index:])[0]
             except ValueError:
                 continue
             if isinstance(value, dict):
@@ -135,7 +161,7 @@ def _decode_json_object(content: str) -> dict:
                 for row in value:
                     if isinstance(row, dict):
                         return row
-        raise
+    raise ValueError("no_json_object")
 
 
 def parse_response(content: str, sources: list[dict]) -> ResearchPayload:
@@ -146,6 +172,15 @@ def parse_response(content: str, sources: list[dict]) -> ResearchPayload:
     try:
         return ResearchPayload.model_validate(_decode_json_object(content))
     except (TypeError, ValueError) as exc:
+        logger.warning(
+            "ai_visibility_research_json_rejected",
+            extra={
+                "content_length": len(content or ""),
+                "has_object": "{" in (content or ""),
+                "has_array": "[" in (content or ""),
+                "validation_type": type(exc).__name__,
+            },
+        )
         raise ResearchValidationError("invalid_research_json") from exc
 
 
