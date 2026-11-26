@@ -1,4 +1,6 @@
 """Request and response contracts for the tenant-scoped prompt library."""
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -55,6 +57,7 @@ class PromptListOut(BaseModel):
 class RunIn(BaseModel):
     channel_id: str = Field(min_length=1, max_length=36)
     prompt_id: str = Field(min_length=1, max_length=36)
+    depth: Literal["quick", "deep"] = "quick"
 
 
 class RunOut(BaseModel):
@@ -63,6 +66,7 @@ class RunOut(BaseModel):
     prompt_id: str
     prompt_snapshot: str
     locale: str
+    research_depth: str
     status: str
     job_id: str | None
     validation_status: str

@@ -21,6 +21,7 @@ from .service import ACTIVE_RUN_STATUSES
 
 logger = logging.getLogger(__name__)
 MIN_SOURCES_FOR_BRIEF = 2
+DEEP_MAX_SOURCES = 6
 MIN_VALIDATED_CLAIMS = 1
 LLM_PENDING_FAILURE_CODE = "llm_call_in_progress"
 LLM_OUTCOME_UNKNOWN_FAILURE_CODE = "llm_outcome_unknown"
@@ -125,19 +126,23 @@ GENERIC_BRANCH_WORDS = {
 
 
 def _branch_tokens(branch: dict) -> set[str]:
-    text = " ".join(
+    name = str(branch.get("name") or "")
+    locality = " ".join(
         str(value or "")
-        for value in (
-            branch.get("name"),
-            branch.get("address"),
-            branch.get("description"),
-        )
-    ).casefold()
-    return {
+        for value in (branch.get("address"), branch.get("locality"))
+    )
+    name_tokens = {
         token
-        for token in re.findall(r"[a-z0-9\u0600-\u06ff]{4,}", text)
+        for token in re.findall(r"[a-z0-9\u0600-\u06ff]{4,}", name.casefold())
         if token not in GENERIC_BRANCH_WORDS
     }
+    locality_tokens = set(
+        re.findall(r"[a-z0-9\u0600-\u06ff]{4,}", locality.casefold())
+    )
+    # A city or district alone is not evidence about this branch. Require the
+    # distinctive part of the name (e.g. "sayvors"), not "makkah".
+    distinctive = name_tokens - locality_tokens
+    return distinctive or name_tokens
 
 
 def _sources_are_relevant(rows, branch: dict) -> bool:
@@ -373,23 +378,36 @@ async def handle_research(job, db: AsyncSession) -> dict:
         if not snapshots:
             await _status(db, run, "searching")
             await ensure_active()
-            query = search.build_query(run.prompt_snapshot, branch)
-            results = await search.search_public_web(tenant_id, query)
+            queries = search.build_queries(
+                run.prompt_snapshot, branch, run.research_depth or "quick"
+            )
+            if run.research_depth == "deep":
+                results = await search.search_many(tenant_id, queries)
+            else:
+                results = await search.search_public_web(tenant_id, queries[0])
             await ensure_active()
             await _status(db, run, "fetching")
-            snapshots = await sources.fetch_sources(db, run_id, results)
+            snapshots = await sources.fetch_sources(
+                db,
+                run_id,
+                results,
+                max_sources=DEEP_MAX_SOURCES
+                if run.research_depth == "deep"
+                else sources.MAX_SOURCES_PER_RUN,
+            )
             await ensure_active()
             coverage["search"] = {
                 "provider": "Bing public web",
-                "query": query,
+                "query": " | ".join(queries),
                 "result_count": len(results),
                 "fetched_count": len(snapshots),
+                "depth": run.research_depth or "quick",
             }
         usable = [row for row in snapshots if row.excerpt]
         if len(usable) >= MIN_SOURCES_FOR_BRIEF and not _sources_are_relevant(
             usable, branch
         ):
-            query = str((coverage.get("search") or {}).get("query") or "")
+            query = str((coverage.get("search") or {}).get("query") or "").split(" | ")[0]
             try:
                 coverage["platforms"] = await search.discover_public_profiles(
                     tenant_id, query or run.prompt_snapshot, str(branch.get("name") or "")

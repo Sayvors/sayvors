@@ -20,6 +20,7 @@ TENANT_SEARCH_RATE_LIMIT = 10
 SEARCH_RATE_WINDOW_SECONDS = 60
 SEARCH_BLOCK_COOLDOWN_SECONDS = 15 * 60
 MAX_SEARCH_RESULTS = 10
+DEEP_MAX_CANDIDATES = 20
 MAX_SEARCH_BYTES = 1024 * 1024
 SEARCH_TIMEOUT_SECONDS = 10.0
 BING_RSS_URL = "https://www.bing.com/search?format=rss&q={query}"
@@ -271,6 +272,39 @@ async def _fetch_results(query: str) -> list[SearchResult]:
         return rows
 
 
+def build_queries(prompt: str, branch: dict, depth: str) -> list[str]:
+    base = build_query(prompt, branch)
+    if depth != "deep":
+        return [base]
+    return [base, f"{base} reviews", f"{base} news"]
+
+
+async def search_many(
+    tenant_id: str, queries: list[str], *, max_results: int = DEEP_MAX_CANDIDATES
+) -> list[SearchResult]:
+    rows: list[SearchResult] = []
+    seen: set[str] = set()
+    for query in queries:
+        for row in await search_public_web(tenant_id, query):
+            key = canonical_url(row.url)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+            if len(rows) >= max_results:
+                return rows
+    return rows
+
+
+def canonical_url(url: str) -> str:
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(url.strip())
+    return urlunsplit(
+        (parts.scheme.casefold(), parts.netloc.casefold(), parts.path or "/", parts.query, "")
+    )
+
+
 async def search_public_web(tenant_id: str, query: str) -> list[SearchResult]:
     normalized = normalize_query(query)
     if not normalized:
@@ -306,6 +340,10 @@ async def search_public_web(tenant_id: str, query: str) -> list[SearchResult]:
     except SearchBlocked as exc:
         await cache_set(block_key, "1", ttl=SEARCH_BLOCK_COOLDOWN_SECONDS)
         raise SearchUnavailable("search_blocked") from exc
+    except TenantSearchRateLimited:
+        raise
+    except SearchUnavailable:
+        raise
     except Exception as exc:
         raise SearchUnavailable("search_unavailable") from exc
     await cache_set(

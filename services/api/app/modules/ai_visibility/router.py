@@ -6,7 +6,7 @@ from ...config import settings
 from ...core.deps import get_db
 from ..auth.rate_limit import rate_limit
 from ..billing.budget import get_balance
-from ..billing.entitlements import check_feature
+from ..billing.entitlements import check_feature, get_entitlements
 from ..team.context import (
     CHANNEL_LEVEL_EDIT,
     CHANNEL_LEVEL_NONE,
@@ -67,8 +67,27 @@ async def _authorize_run(
     return run
 
 
-async def _preflight_research(ctx: TenantContext) -> None:
+async def _preflight_research(
+    ctx: TenantContext, db: AsyncSession, depth: str
+) -> None:
     await check_feature(ctx.tenant_id, "ai_replies")
+    ent = await get_entitlements(ctx.tenant_id, db)
+    limit = (
+        ent.max_deep_research_month
+        if depth == "deep"
+        else ent.max_quick_research_month
+    )
+    if limit is not None:
+        used = await service.monthly_research_count(db, ctx.tenant_id, depth)
+        if used >= limit:
+            raise HTTPException(
+                403,
+                (
+                    f"Monthly {depth} research limit reached "
+                    f"({used}/{limit}). Upgrade your plan or wait until next month."
+                ),
+                headers={"X-Entitlement-Denied": f"{depth}_research"},
+            )
     balance = await get_balance(ctx.tenant_id)
     if balance is None:
         raise HTTPException(503, "credit_balance_unavailable")
@@ -179,6 +198,7 @@ def _run_out(row) -> RunOut:
         prompt_id=row.prompt_id,
         prompt_snapshot=row.prompt_snapshot,
         locale=row.locale,
+        research_depth=row.research_depth or "quick",
         status=row.status,
         job_id=row.job_id,
         validation_status=row.validation_status,
@@ -207,7 +227,7 @@ async def create_run(
     )
     if existing is not None:
         return _run_out(existing)
-    await _preflight_research(ctx)
+    await _preflight_research(ctx, db, body.depth)
     try:
         row = await service.create_run(
             db,
@@ -215,6 +235,7 @@ async def create_run(
             body.channel_id,
             body.prompt_id,
             locale="ar" if getattr(ctx.user, "language", None) == "ar" else "en",
+            depth=body.depth,
         )
     except service.OwnedChannelRequired as exc:
         raise HTTPException(404, "channel_not_found") from exc
@@ -351,7 +372,7 @@ async def retry_run(
         fail_closed=True,
     ):
         raise HTTPException(429, "too_many_requests")
-    await _preflight_research(ctx)
+    await _preflight_research(ctx, db, run.research_depth or "quick")
     try:
         row = await service.retry_run(
             db,

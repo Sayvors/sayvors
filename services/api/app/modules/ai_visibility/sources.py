@@ -52,7 +52,9 @@ def canonicalize_url(url: str) -> str:
     )
 
 
-def select_sources(rows: list[SearchResult]) -> list[SearchResult]:
+def select_sources(
+    rows: list[SearchResult], *, max_sources: int = MAX_SOURCES_PER_RUN
+) -> list[SearchResult]:
     seen_urls: set[str] = set()
     per_domain: dict[str, int] = {}
     selected: list[SearchResult] = []
@@ -64,7 +66,7 @@ def select_sources(rows: list[SearchResult]) -> list[SearchResult]:
         seen_urls.add(url)
         per_domain[domain] = per_domain.get(domain, 0) + 1
         selected.append(SearchResult(url=url, title=row.title, snippet=row.snippet))
-        if len(selected) == MAX_SOURCES_PER_RUN:
+        if len(selected) == max_sources:
             break
     return selected
 
@@ -118,7 +120,7 @@ async def fetch_source(
 
 
 async def fetch_sources(
-    db, run_id: str, rows: list[SearchResult]
+    db, run_id: str, rows: list[SearchResult], *, max_sources: int = MAX_SOURCES_PER_RUN
 ) -> list[AiVisibilitySource]:
     semaphore = asyncio.Semaphore(SOURCE_CONCURRENCY)
 
@@ -129,7 +131,9 @@ async def fetch_sources(
     snapshots = await asyncio.gather(
         *[
             _one(position, result)
-            for position, result in enumerate(select_sources(rows))
+            for position, result in enumerate(
+                select_sources(rows, max_sources=max_sources)
+            )
         ]
     )
     db.add_all(snapshots)

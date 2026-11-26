@@ -347,6 +347,7 @@ async def create_run(
     prompt_id: str,
     *,
     locale: str,
+    depth: str = "quick",
 ) -> AiVisibilityRun:
     """Create one durable run under the prompt's durable attempt policy."""
     await _owned_channel(db, tenant_id, channel_id, lock=True)
@@ -408,6 +409,7 @@ async def create_run(
         prompt_id=prompt_id,
         prompt_snapshot=prompt.prompt_text,
         locale=locale,
+        research_depth=depth,
         status="queued",
     )
     db.add(run)
@@ -452,6 +454,25 @@ def _rate(hits: int, total: int) -> float | None:
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+async def monthly_research_count(
+    db: AsyncSession, tenant_id: str, depth: str
+) -> int:
+    month_start = datetime.now(timezone.utc).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    return int(
+        (
+            await db.execute(
+                select(func.count(AiVisibilityRun.id)).where(
+                    AiVisibilityRun.tenant_id == tenant_id,
+                    AiVisibilityRun.research_depth == depth,
+                    AiVisibilityRun.created_at >= month_start,
+                )
+            )
+        ).scalar_one()
+    )
 
 
 async def overview(
@@ -601,7 +622,12 @@ async def retry_run(
     # Creation owns the shared channel/prompt lock, cooldown, and durable
     # attempt budget so POST /runs and POST /runs/{id}/retry cannot diverge.
     return await create_run(
-        db, tenant_id, run.channel_id, run.prompt_id, locale=locale
+        db,
+        tenant_id,
+        run.channel_id,
+        run.prompt_id,
+        locale=locale,
+        depth=run.research_depth or "quick",
     )
 
 

@@ -118,6 +118,9 @@ class AiVisibilityRun(Base):
     )
     prompt_snapshot: Mapped[str] = mapped_column(Text)
     locale: Mapped[str] = mapped_column(String(8), default="en")
+    research_depth: Mapped[str] = mapped_column(
+        String(16), default="quick", server_default="quick"
+    )
     status: Mapped[str] = mapped_column(String(24), default="queued")
     job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     search_provider: Mapped[str | None] = mapped_column(String(40), nullable=True)
