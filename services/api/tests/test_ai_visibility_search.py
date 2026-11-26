@@ -29,6 +29,24 @@ def test_normalize_query_is_stable():
     assert search.normalize_query("  Best   COFFEE near Malqa ") == "best coffee near malqa"
 
 
+def test_build_query_uses_entity_and_locality():
+    query = search.build_query(
+        "What are the best options near Sayvors Company Branch-Makkah?",
+        {"name": "Sayvors Company Branch-Makkah", "address": "Makkah"},
+    )
+    assert query.startswith("Sayvors Company Branch-Makkah")
+    assert "Makkah" in query
+    assert "best options" not in query.casefold()
+
+
+def test_build_query_does_not_repeat_the_entity():
+    query = search.build_query(
+        "Is Sayvors Company Branch-Makkah recommended by reliable sources?",
+        {"name": "Sayvors Company Branch-Makkah"},
+    )
+    assert query.casefold().count("sayvors") == 1
+
+
 def test_rejects_non_http_results():
     results = [
         search.SearchResult(url="javascript:alert(1)", title="bad", snippet=""),

@@ -53,6 +53,39 @@ def normalize_query(query: str) -> str:
     return " ".join(query.casefold().split())
 
 
+QUESTION_WORDS = re.compile(
+    r"\b(what|which|who|are|is|the|best|top|options?|near|recommend(?:ed)?|"
+    r"reliable|sources?|for|in|at|by|with|about|compare|versus|vs)\b",
+    re.I,
+)
+
+
+def build_query(prompt: str, branch: dict) -> str:
+    """Turn a natural question into a local-entity search query.
+
+    Raw questions like "What are the best options near Acme?" make Bing
+    return generic YouTube/help pages. A named entity plus locality produces
+    pages about the business instead.
+    """
+    name = " ".join(str(branch.get("name") or "").split())
+    locality = " ".join(
+        str(branch.get("address") or branch.get("locality") or "").split()
+    )
+    remainder = " ".join(QUESTION_WORDS.sub(" ", prompt).split())
+    parts = [part for part in (name, remainder, locality) if part]
+    if not parts:
+        return normalize_query(prompt)
+    seen: set[str] = set()
+    words: list[str] = []
+    for word in " ".join(parts).split():
+        key = word.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        words.append(word)
+    return " ".join(words)[:300]
+
+
 def parse_bing_rss(body: bytes) -> list[SearchResult]:
     root = ElementTree.fromstring(body)
     rows: list[SearchResult] = []

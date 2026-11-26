@@ -182,6 +182,22 @@ def test_parse_response_unwraps_double_encoded_json():
     assert parsed.answer == "Acme is nearby [S1]."
 
 
+def test_parse_response_ignores_model_outcome_arrays():
+    parsed = research.parse_response(
+        json.dumps({
+            "answer": "Acme is nearby [S1].",
+            "claims": [],
+            "mentioned": [{"source_id": "S1"}],
+            "cited": ["S1"],
+            "recommended": [],
+            "incorrect": [],
+        }),
+        [_source("src-1", "Acme is nearby.")],
+    )
+    assert parsed.mentioned is False
+    assert parsed.cited is False
+
+
 def test_response_collections_are_hard_bounded():
     claim = {
         "claim": "Acme is nearby",

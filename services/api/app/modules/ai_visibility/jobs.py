@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -107,6 +108,47 @@ def _source_payload(rows) -> list[dict]:
         }
         for row in rows
     ]
+
+
+GENERIC_BRANCH_WORDS = {
+    "company",
+    "branch",
+    "business",
+    "location",
+    "store",
+    "shop",
+    "restaurant",
+    "services",
+    "nearby",
+    "best",
+}
+
+
+def _branch_tokens(branch: dict) -> set[str]:
+    text = " ".join(
+        str(value or "")
+        for value in (
+            branch.get("name"),
+            branch.get("address"),
+            branch.get("description"),
+        )
+    ).casefold()
+    return {
+        token
+        for token in re.findall(r"[a-z0-9\u0600-\u06ff]{4,}", text)
+        if token not in GENERIC_BRANCH_WORDS
+    }
+
+
+def _sources_are_relevant(rows, branch: dict) -> bool:
+    tokens = _branch_tokens(branch)
+    if not tokens:
+        return True
+    for row in rows:
+        text = f"{row.title or ''} {row.snippet or ''} {row.excerpt or ''}".casefold()
+        if any(token in text for token in tokens):
+            return True
+    return False
 
 
 async def _status(db: AsyncSession, run: AiVisibilityRun, status: str) -> None:
@@ -265,6 +307,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
                 return {"status": "cancelled", "run_id": run_id}
             return _finish(run, started, "ambiguous")
 
+        branch = await load_branch_facts(db, tenant_id, run.channel_id)
         snapshots = list(
             (
                 await db.execute(
@@ -277,12 +320,32 @@ async def handle_research(job, db: AsyncSession) -> dict:
         if not snapshots:
             await _status(db, run, "searching")
             await ensure_active()
-            results = await search.search_public_web(tenant_id, run.prompt_snapshot)
+            results = await search.search_public_web(
+                tenant_id, search.build_query(run.prompt_snapshot, branch)
+            )
             await ensure_active()
             await _status(db, run, "fetching")
             snapshots = await sources.fetch_sources(db, run_id, results)
             await ensure_active()
         usable = [row for row in snapshots if row.excerpt]
+        if len(usable) >= MIN_SOURCES_FOR_BRIEF and not _sources_are_relevant(
+            usable, branch
+        ):
+            run = await _set_terminal(
+                db,
+                run_id,
+                tenant_id,
+                job=job,
+                status="insufficient_evidence",
+                failure_code="irrelevant_sources",
+                error=(
+                    "No supplied public page discusses this branch, so Sayvors "
+                    "will not invent an answer."
+                ),
+            )
+            if run is None:
+                return {"status": "cancelled", "run_id": run_id}
+            return _finish(run, started, run.status)
         if len(usable) < MIN_SOURCES_FOR_BRIEF:
             run = await _set_terminal(
                 db,
@@ -299,7 +362,6 @@ async def handle_research(job, db: AsyncSession) -> dict:
 
         await _status(db, run, "reading")
         await ensure_active()
-        branch = await load_branch_facts(db, tenant_id, run.channel_id)
         source_payload = _source_payload(usable)
         await _status(db, run, "writing")
         await ensure_active()

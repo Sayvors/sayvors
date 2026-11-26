@@ -431,6 +431,44 @@ async def test_tenant_search_rate_limit_is_terminal(
 
 
 @pytest.mark.asyncio
+async def test_job_rejects_unrelated_sources_before_the_llm(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+    db.add_all(
+        [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=position,
+                url=f"https://unrelated{position}.example",
+                canonical_url=f"https://unrelated{position}.example",
+                title="YouTube help",
+                excerpt="Create a YouTube channel and manage Google account access.",
+            )
+            for position in range(2)
+        ]
+    )
+    await db.commit()
+    called = []
+
+    async def _facts(*_args):
+        return {"name": "Acme Coffee", "address": "Makkah"}
+
+    async def _complete(*_args, **_kwargs):
+        called.append("llm")
+        raise AssertionError("unrelated sources must not reach the model")
+
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+    monkeypatch.setattr(jobs.research, "complete_research", _complete)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "insufficient_evidence"
+    assert run.failure_code == "irrelevant_sources"
+    assert called == []
+
+
+@pytest.mark.asyncio
 async def test_job_marks_insufficient_evidence(
     db, user_id, channel_id, monkeypatch
 ):
