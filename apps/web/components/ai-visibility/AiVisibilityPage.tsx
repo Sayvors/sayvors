@@ -16,6 +16,7 @@ import {
   type AiVisibilityPrompt,
 } from "@/lib/api-ai-visibility";
 import { isActiveStatus } from "@/lib/ai-visibility-metrics";
+import { researchErrorMessage } from "@/lib/ai-visibility-errors";
 import AiVisibilitySummary from "./AiVisibilitySummary";
 import PromptLibrary from "./PromptLibrary";
 import ResearchRunPanel from "./ResearchRunPanel";
@@ -77,6 +78,11 @@ export default function AiVisibilityPage() {
       runs.data?.items[0];
     if (latest && !selectedRunId) setSelectedRunId(latest.id);
   }, [runs.data, selectedRunId]);
+
+  useEffect(() => {
+    const firstActive = prompts.data?.items.find((row) => row.is_active);
+    if (firstActive && !selectedPromptId) setSelectedPromptId(firstActive.id);
+  }, [prompts.data, selectedPromptId]);
 
   const selectedPrompt = useMemo(
     () =>
@@ -140,7 +146,7 @@ export default function AiVisibilityPage() {
   };
 
   return (
-    <div className="ai-visibility-ui h-full overflow-y-auto overscroll-contain p-4 sm:p-6 lg:p-8">
+    <div className="ai-visibility-ui h-full space-y-5 overflow-y-auto overscroll-contain p-4 sm:p-6 lg:p-8">
       <header className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
         <div className="max-w-3xl">
           <p className="ai-eyebrow">{copy.workspaceEyebrow}</p>
@@ -200,7 +206,7 @@ export default function AiVisibilityPage() {
           role="alert"
           className="rounded-[var(--ai-radius-control)] border border-[var(--ai-danger)] bg-[var(--ai-surface)] px-4 py-3 text-[12px] font-semibold text-[var(--ai-danger)]"
         >
-          {actionError}
+          {researchErrorMessage(actionError)}
         </p>
       )}
 
@@ -212,113 +218,111 @@ export default function AiVisibilityPage() {
         copy={copy}
       />
 
-      <section className="ai-panel p-4 sm:p-5" aria-label={copy.howItWorks}>
+      <section className="ai-panel p-5 sm:p-7">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="ai-status-dot" data-tone="active" />
-            <h2 className="text-[13px] font-bold text-[var(--ai-ink)]">{copy.howItWorks}</h2>
+          <div>
+            <p className="ai-eyebrow">{copy.decisionBrief}</p>
+            <h2 className="mt-1 text-[20px] font-bold tracking-[-0.02em] text-[var(--ai-ink)]">
+              {copy.answer}
+            </h2>
           </div>
-          <p className="font-mono text-[10px] uppercase text-[var(--ai-muted)]">{copy.stepsCount}</p>
+          <span className="inline-flex items-center gap-2 rounded-full border border-[var(--ai-line)] px-3 py-1.5 text-[10px] font-bold text-[var(--ai-muted)]">
+            <span className="ai-status-dot" data-tone="ok" />
+            Sayvors Grounded AI
+          </span>
         </div>
-        <ol className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {[copy.howStep1, copy.howStep2, copy.howStep3, copy.howStep4].map((step, index) => (
-            <li
-              key={step}
-              title={step}
-              className="rounded-[var(--ai-radius-control)] border border-[var(--ai-line)] bg-[var(--ai-surface)] p-3 transition-colors hover:border-[var(--ai-accent)]"
+        {selectedPrompt ? (
+          <div className="mt-5 flex flex-col gap-4 rounded-[var(--ai-radius-control)] border border-[var(--ai-line)] bg-[var(--ai-sunken)] p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="ai-eyebrow">{selectedPrompt.title}</p>
+              <p className="mt-1 whitespace-pre-wrap text-[13px] leading-6 text-[var(--ai-ink)]">
+                {selectedPrompt.prompt_text}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void runPrompt(selectedPrompt)}
+              title={copy.tipRun}
+              className="ai-btn-primary shrink-0 px-4 text-[12px]"
             >
-              <span className="font-mono text-[10px] font-bold text-[var(--ai-signal)]">
-                0{index + 1}
-              </span>
-              <p className="mt-1 text-[11px] leading-5 text-[var(--ai-ink-2)]">{step}</p>
-            </li>
-          ))}
-        </ol>
+              {copy.findWithProof}
+            </button>
+          </div>
+        ) : (
+          <div className="mt-5 flex items-start gap-4 rounded-[var(--ai-radius-control)] border border-dashed border-[var(--ai-line-strong)] bg-[var(--ai-sunken)] p-5">
+            <svg viewBox="0 0 48 48" className="h-12 w-12 shrink-0 text-[var(--ai-accent)]" fill="none" aria-hidden="true">
+              <path d="M12 7h18l6 6v28H12V7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+              <path d="M30 7v7h6M18 22h12M18 28h12M18 34h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <div>
+              <h3 className="text-[14px] font-bold">{copy.choosePrompt}</h3>
+              <p className="mt-1 max-w-md text-[12px] leading-5 text-[var(--ai-ink-2)]">
+                {copy.noRuns}
+              </p>
+            </div>
+          </div>
+        )}
+        <div className="mt-6">
+          <ResearchRunPanel
+            runId={selectedRunId}
+            copy={copy}
+            onRetry={invalidate}
+          />
+        </div>
       </section>
 
-      <div className="grid items-start gap-5 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)]">
-        <PromptLibrary
-          channelId={channelId}
-          copy={copy}
-          prompts={prompts.data?.items ?? []}
-          suggestions={suggestions}
-          selectedId={selectedPromptId}
-          onSelect={setSelectedPromptId}
-          loading={prompts.isPending}
-          onCreate={async (body) => {
-            await createPrompt(body);
-            invalidate();
-          }}
-          onUpdate={async (id, body) => {
-            await updatePrompt(id, body);
-            invalidate();
-          }}
-          onDelete={async (id) => {
-            await deletePrompt(id);
-            invalidate();
-          }}
-        />
-        <section className="ai-panel p-5 sm:p-7">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="ai-eyebrow">{copy.decisionBrief}</p>
-              <h2 className="mt-1 text-[20px] font-bold tracking-[-0.02em] text-[var(--ai-ink)]">
-                {copy.answer}
-              </h2>
-            </div>
-            <span className="inline-flex items-center gap-2 rounded-full border border-[var(--ai-line)] px-3 py-1.5 text-[10px] font-bold text-[var(--ai-muted)]">
-              <span className="ai-status-dot" data-tone="ok" />
-              Sayvors Grounded AI
-            </span>
-          </div>
-          {selectedPrompt ? (
-            <div className="mt-5 flex flex-col gap-4 rounded-[var(--ai-radius-control)] border border-[var(--ai-line)] bg-[var(--ai-sunken)] p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <p className="ai-eyebrow">{selectedPrompt.title}</p>
-                <p className="mt-1 whitespace-pre-wrap text-[13px] leading-6 text-[var(--ai-ink)]">
-                  {selectedPrompt.prompt_text}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void runPrompt(selectedPrompt)}
-                title={copy.tipRun}
-                className="ai-btn-primary shrink-0 px-4 text-[12px]"
-              >
-                {copy.runResearch}
-              </button>
-            </div>
-          ) : (
-            <div className="mt-5 flex items-start gap-4 rounded-[var(--ai-radius-control)] border border-dashed border-[var(--ai-line-strong)] bg-[var(--ai-sunken)] p-5">
-              <svg viewBox="0 0 48 48" className="h-12 w-12 shrink-0 text-[var(--ai-accent)]" fill="none" aria-hidden="true">
-                <path d="M12 7h18l6 6v28H12V7Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                <path d="M30 7v7h6M18 22h12M18 28h12M18 34h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-              <div>
-                <h3 className="text-[14px] font-bold">{copy.choosePrompt}</h3>
-                <p className="mt-1 max-w-md text-[12px] leading-5 text-[var(--ai-ink-2)]">
-                  {copy.noRuns}
-                </p>
-              </div>
-            </div>
-          )}
-          <div className="mt-6">
-            <ResearchRunPanel
-              runId={selectedRunId}
-              copy={copy}
-              onRetry={invalidate}
-            />
-          </div>
-        </section>
-      </div>
-      <RunHistory
-        channelId={channelId}
-        selectedId={selectedRunId}
-        copy={copy}
-        loading={runs.isPending}
-        onSelect={setSelectedRunId}
-        onChanged={invalidate}
-      />
+      <details className="ai-panel group">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-[13px] font-bold marker:content-none">
+          <span>{copy.promptLibrary}</span>
+          <span className="text-[11px] font-normal text-[var(--ai-muted)]">
+            {prompts.data?.items.length ?? 0}
+          </span>
+        </summary>
+        <div className="border-t border-[var(--ai-line)] p-5">
+          <PromptLibrary
+            channelId={channelId}
+            copy={copy}
+            prompts={prompts.data?.items ?? []}
+            suggestions={suggestions}
+            selectedId={selectedPromptId}
+            onSelect={setSelectedPromptId}
+            loading={prompts.isPending}
+            embedded
+            onCreate={async (body) => {
+              await createPrompt(body);
+              invalidate();
+            }}
+            onUpdate={async (id, body) => {
+              await updatePrompt(id, body);
+              invalidate();
+            }}
+            onDelete={async (id) => {
+              await deletePrompt(id);
+              invalidate();
+            }}
+          />
+        </div>
+      </details>
+
+      <details className="ai-panel group">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-[13px] font-bold marker:content-none">
+          <span>{copy.history}</span>
+          <span className="text-[11px] font-normal text-[var(--ai-muted)]">
+            {runs.data?.total ?? 0}
+          </span>
+        </summary>
+        <div className="border-t border-[var(--ai-line)] p-5">
+          <RunHistory
+            channelId={channelId}
+            selectedId={selectedRunId}
+            copy={copy}
+            loading={runs.isPending}
+            embedded
+            onSelect={setSelectedRunId}
+            onChanged={invalidate}
+          />
+        </div>
+      </details>
     </div>
   );
 }

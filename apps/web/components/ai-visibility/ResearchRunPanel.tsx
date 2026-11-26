@@ -6,7 +6,22 @@ import type { Dict } from "@/lib/i18n/en";
 import { fetchRun, retryRun } from "@/lib/api-ai-visibility";
 import { isActiveStatus } from "@/lib/ai-visibility-metrics";
 import { queryKeys } from "@/lib/query-keys";
+import { researchErrorMessage } from "@/lib/ai-visibility-errors";
 import DecisionBrief from "./DecisionBrief";
+
+const PROGRESS: Record<string, number> = {
+  queued: 8,
+  searching: 25,
+  fetching: 40,
+  reading: 58,
+  validating: 74,
+  writing: 88,
+  completed: 100,
+};
+
+function progressFor(status: string): number {
+  return PROGRESS[status] ?? 10;
+}
 
 export default function ResearchRunPanel({
   runId,
@@ -103,14 +118,32 @@ export default function ResearchRunPanel({
       </div>
       {active && (
         <div className="space-y-3" role="status">
-          <div className="ai-skeleton h-4 w-2/3" />
-          <div className="ai-skeleton h-4 w-full" />
-          <div className="ai-skeleton h-4 w-5/6" />
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[12px] font-semibold text-[var(--ai-ink)]">{stage}</p>
+            <span className="font-mono text-[10px] text-[var(--ai-muted)]">
+              {progressFor(detail.status)}%
+            </span>
+          </div>
+          <progress
+            value={progressFor(detail.status)}
+            max={100}
+            aria-label={stage}
+            className="h-2 w-full overflow-hidden rounded-full accent-[var(--ai-signal)]"
+          />
+          <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[9px] uppercase tracking-wide text-[var(--ai-muted)]">
+            <span>Scan public pages</span>
+            <span>Check claims</span>
+            <span>Draft brief</span>
+          </div>
+          <div className="space-y-2 pt-1">
+            <div className="ai-skeleton h-3 w-2/3" />
+            <div className="ai-skeleton h-3 w-full" />
+          </div>
         </div>
       )}
       {(detail.error || actionError) && (
         <p role="alert" className="rounded-[var(--ai-radius-control)] bg-[var(--ai-sunken)] px-4 py-3 text-[12px] leading-5 text-[var(--ai-danger)]">
-          {actionError ?? detail.error}
+          {researchErrorMessage(actionError ?? detail.error)}
         </p>
       )}
       {(detail.status === "completed" ||

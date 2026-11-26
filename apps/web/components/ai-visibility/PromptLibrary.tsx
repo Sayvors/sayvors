@@ -52,6 +52,7 @@ type Props = {
   ) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   loading?: boolean;
+  embedded?: boolean;
 };
 
 export default function PromptLibrary({
@@ -65,6 +66,7 @@ export default function PromptLibrary({
   onUpdate,
   onDelete,
   loading = false,
+  embedded = false,
 }: Props) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<PromptItem | null>(null);
@@ -117,7 +119,7 @@ export default function PromptLibrary({
   };
 
   return (
-    <section className="ai-panel p-5 lg:sticky lg:top-6" aria-label={copy.promptLibrary}>
+    <section className={embedded ? "" : "ai-panel p-5 lg:sticky lg:top-6"} aria-label={copy.promptLibrary}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="ai-eyebrow">{copy.libraryEyebrow}</p>

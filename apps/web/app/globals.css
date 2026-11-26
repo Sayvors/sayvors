@@ -548,6 +548,15 @@ html[lang="ar"] {
   background: var(--ai-line);
 }
 
+.ai-panel > summary {
+  border-radius: var(--ai-radius-panel);
+  transition: background-color var(--ai-dur) var(--ai-ease);
+}
+
+.ai-panel > summary:hover {
+  background: var(--ai-sunken);
+}
+
 .ai-status-dot {
   width: 0.5rem;
   height: 0.5rem;
@@ -577,6 +586,29 @@ html[lang="ar"] {
   border-radius: var(--ai-radius-control);
   background: var(--ai-sunken);
   animation: ai-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.ai-visibility-ui progress {
+  accent-color: var(--ai-signal);
+  appearance: none;
+  background: var(--ai-sunken);
+  border: 0;
+}
+
+.ai-visibility-ui progress::-webkit-progress-bar {
+  background: var(--ai-sunken);
+  border-radius: 999px;
+}
+
+.ai-visibility-ui progress::-webkit-progress-value {
+  background: var(--ai-signal);
+  border-radius: 999px;
+  transition: width 300ms var(--ai-ease);
+}
+
+.ai-visibility-ui progress::-moz-progress-bar {
+  background: var(--ai-signal);
+  border-radius: 999px;
 }
 
 @keyframes ai-skeleton-pulse {

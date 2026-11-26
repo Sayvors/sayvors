@@ -223,9 +223,13 @@ async def create_run(
     except service.PromptInactive as exc:
         raise HTTPException(409, str(exc)) from exc
     except service.RetryCooldown as exc:
-        raise HTTPException(429, str(exc)) from exc
+        raise HTTPException(
+            429, str(exc), headers={"Retry-After": "60"}
+        ) from exc
     except service.RetryLimitReached as exc:
-        raise HTTPException(409, str(exc)) from exc
+        raise HTTPException(
+            409, str(exc), headers={"Retry-After": "3600"}
+        ) from exc
     return _run_out(row)
 
 
@@ -358,9 +362,13 @@ async def retry_run(
     except service.PromptInactive as exc:
         raise HTTPException(409, str(exc)) from exc
     except service.RetryCooldown as exc:
-        raise HTTPException(429, str(exc)) from exc
+        raise HTTPException(
+            429, str(exc), headers={"Retry-After": "60"}
+        ) from exc
     except service.RetryLimitReached as exc:
-        raise HTTPException(409, str(exc)) from exc
+        raise HTTPException(
+            409, str(exc), headers={"Retry-After": "3600"}
+        ) from exc
     if row is None:
         raise HTTPException(404, "run_not_found")
     return _run_out(row)

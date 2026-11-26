@@ -12,6 +12,7 @@ import {
   type AiVisibilityRunListItem,
 } from "@/lib/api-ai-visibility";
 import { queryKeys } from "@/lib/query-keys";
+import { researchErrorMessage } from "@/lib/ai-visibility-errors";
 
 type Copy = {
   history: string;
@@ -39,6 +40,7 @@ export default function RunHistory({
   onSelect,
   onChanged,
   loading = false,
+  embedded = false,
 }: {
   channelId: string;
   selectedId: string | null;
@@ -46,6 +48,7 @@ export default function RunHistory({
   onSelect: (id: string) => void;
   onChanged: () => void;
   loading?: boolean;
+  embedded?: boolean;
 }) {
   const [status, setStatus] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -101,7 +104,7 @@ export default function RunHistory({
 
   if (query.isPending || loading) {
     return (
-      <section className="ai-panel p-5 sm:p-6" aria-label={copy.history}>
+      <section className={embedded ? "" : "ai-panel p-5 sm:p-6"} aria-label={copy.history}>
         <p className="ai-eyebrow">{copy.historyEyebrow}</p>
         <h2 className="mt-1 text-[18px] font-bold">{copy.history}</h2>
         <div role="status" aria-label={copy.loading} className="mt-4 space-y-2">
@@ -122,7 +125,7 @@ export default function RunHistory({
     );
   }
   return (
-    <section className="ai-panel p-5 sm:p-6" aria-label={copy.history}>
+    <section className={embedded ? "" : "ai-panel p-5 sm:p-6"} aria-label={copy.history}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="ai-eyebrow">{copy.historyEyebrow}</p>
@@ -144,7 +147,7 @@ export default function RunHistory({
       </div>
       {error && (
         <p role="alert" className="mt-3 rounded-[var(--ai-radius-control)] bg-[var(--ai-sunken)] px-3 py-2 text-[12px] text-[var(--ai-danger)]">
-          {error}
+          {researchErrorMessage(error)}
         </p>
       )}
       <div className="mt-3 space-y-2">

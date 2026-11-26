@@ -113,11 +113,12 @@ describe("AiVisibilityPage", () => {
     expect(screen.queryByText("100.0%")).not.toBeInTheDocument();
   });
 
-  it("shows a grounded research guide and keeps query data fresh", () => {
+  it("shows result-first disclosures and keeps query data fresh", () => {
     channels.value = [{ id: "branch-1", label: "Acme Coffee" }];
     render(<AiVisibilityPage />);
 
-    expect(screen.getByText("How grounded research works")).toBeInTheDocument();
+    expect(screen.getAllByText("Prompt library").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Research history").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Branch")).toHaveAttribute("title");
     const overviewCall = vi
       .mocked(useQuery)
@@ -143,7 +144,7 @@ describe("AiVisibilityPage", () => {
 
     render(<AiVisibilityPage />);
     fireEvent.click(await screen.findByRole("button", { name: /Coffee/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Run research" }));
+    fireEvent.click(screen.getByRole("button", { name: "Find with proof" }));
     await waitFor(() =>
       expect(api.createRun).toHaveBeenCalledWith({
         channel_id: "branch-1",
