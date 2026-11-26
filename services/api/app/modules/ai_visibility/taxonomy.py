@@ -40,6 +40,19 @@ class IntentSpec:
         )
 
 
+# Explicit business fields outrank incidental words in reviews or marketing
+# copy. The numbers are weights, not probabilities; they only rank industries.
+CATEGORY_SIGNAL_WEIGHT = 5
+NAME_SIGNAL_WEIGHT = 3
+DESCRIPTION_SIGNAL_WEIGHT = 2
+REVIEW_SIGNAL_WEIGHT = 1
+BASE_INDUSTRY_CONFIDENCE = 0.35
+CONFIDENCE_SCORE_DIVISOR = 20
+MAX_INDUSTRY_CONFIDENCE = 0.95
+LOW_INDUSTRY_CONFIDENCE = 0.6
+UNKNOWN_INDUSTRY_CONFIDENCE = 0.2
+
+
 # A generic word such as "shop" is not enough to classify a business; the
 # classifier must see a real category, service, or product signal.
 INDUSTRY_ALIASES: dict[str, tuple[str, ...]] = {
@@ -492,13 +505,13 @@ def _field_text(profile: dict, field: str) -> str:
 def classify_industry(profile: dict) -> IndustryMatch:
     """Classify from combined signals, returning explicit uncertainty."""
     fields = (
-        ("categories", 5),
-        ("name", 3),
-        ("description", 2),
-        ("services", 2),
-        ("products", 2),
-        ("website_title", 2),
-        ("review_themes", 1),
+        ("categories", CATEGORY_SIGNAL_WEIGHT),
+        ("name", NAME_SIGNAL_WEIGHT),
+        ("description", DESCRIPTION_SIGNAL_WEIGHT),
+        ("services", DESCRIPTION_SIGNAL_WEIGHT),
+        ("products", DESCRIPTION_SIGNAL_WEIGHT),
+        ("website_title", DESCRIPTION_SIGNAL_WEIGHT),
+        ("review_themes", REVIEW_SIGNAL_WEIGHT),
     )
     scores: dict[str, float] = {}
     signals: dict[str, list[str]] = {}
@@ -516,7 +529,7 @@ def classify_industry(profile: dict) -> IndustryMatch:
             "local_services",
             "unknown",
             (),
-            0.2,
+            UNKNOWN_INDUSTRY_CONFIDENCE,
             (),
             ("industry_unclear",),
             service_text=" ".join(
@@ -525,14 +538,17 @@ def classify_industry(profile: dict) -> IndustryMatch:
             ).casefold(),
         )
     industry = max(scores, key=scores.get)
-    confidence = min(0.95, 0.35 + scores[industry] / 20)
+    confidence = min(
+        MAX_INDUSTRY_CONFIDENCE,
+        BASE_INDUSTRY_CONFIDENCE + scores[industry] / CONFIDENCE_SCORE_DIVISOR,
+    )
     return IndustryMatch(
         industry,
         industry,
         (),
         confidence,
         tuple(signals[industry]),
-        ("industry_confidence_low",) if confidence < 0.6 else (),
+        ("industry_confidence_low",) if confidence < LOW_INDUSTRY_CONFIDENCE else (),
         service_text=" ".join(
             _field_text(profile, field)
             for field in ("description", "services", "products")
