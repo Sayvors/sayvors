@@ -79,7 +79,7 @@ describe("DecisionBrief", () => {
   it("renders cited answer and evidence-backed actions", () => {
     render(<DecisionBrief detail={detail as never} copy={copy as never} />);
     expect(screen.getByText(/Acme Coffee is recommended/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "S2" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "[S2]" })).toHaveAttribute(
       "href",
       "https://example.com",
     );

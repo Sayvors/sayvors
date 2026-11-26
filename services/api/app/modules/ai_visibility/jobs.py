@@ -273,7 +273,7 @@ async def _owned_evidence_fallback(
         claims=[
             research.ResearchClaim(
                 claim=listing.rstrip("."),
-                quote=facts,
+                quote=listing,
                 source_ids=["S1", "S2"],
             )
         ],

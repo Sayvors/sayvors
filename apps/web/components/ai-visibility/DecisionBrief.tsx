@@ -55,7 +55,7 @@ function Answer({
             rel="noreferrer"
             className="font-bold text-[var(--ai-accent)] underline"
           >
-            {label}
+            [{label}]
           </a>
         ) : (
           part

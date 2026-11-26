@@ -94,6 +94,9 @@ export default function ResearchRunPanel({
             <p className="text-[12px] font-bold text-[var(--ai-ink)]">{stage}</p>
             <p className="mt-0.5 font-mono text-[10px] text-[var(--ai-muted)]">
               {detail.evidence_coverage.source_count ?? 0} {copy.sources.toLowerCase()}
+              {detail.status === "insufficient_evidence"
+                ? ` · ${copy.ownedEvidenceOnly}`
+                : ""}
             </p>
           </div>
         </div>
@@ -141,7 +144,8 @@ export default function ResearchRunPanel({
           </div>
         </div>
       )}
-      {(detail.error || actionError) && (
+      {(actionError ||
+        (detail.error && detail.status !== "insufficient_evidence")) && (
         <p role="alert" className="rounded-[var(--ai-radius-control)] bg-[var(--ai-sunken)] px-4 py-3 text-[12px] leading-5 text-[var(--ai-danger)]">
           {researchErrorMessage(actionError ?? detail.error)}
         </p>

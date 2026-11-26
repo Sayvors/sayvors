@@ -234,7 +234,7 @@ export default function AiVisibilityPage() {
         {selectedPrompt ? (
           <div className="mt-5 flex flex-col gap-4 rounded-[var(--ai-radius-control)] border border-[var(--ai-line)] bg-[var(--ai-sunken)] p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <p className="ai-eyebrow">{selectedPrompt.title}</p>
+              <p className="ai-eyebrow">{copy.promptLabel}</p>
               <p className="mt-1 whitespace-pre-wrap text-[13px] leading-6 text-[var(--ai-ink)]">
                 {selectedPrompt.prompt_text}
               </p>
