@@ -89,6 +89,136 @@ class AiVisibilityAttempt(Base):
     )
 
 
+class AiVisibilityQuerySet(Base):
+    """One immutable version of a branch's generated customer question set."""
+
+    __tablename__ = "ai_visibility_query_sets"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "channel_id",
+            "version",
+            name="uq_ai_visibility_query_set_version",
+        ),
+        Index(
+            "ix_ai_visibility_query_sets_tenant_channel",
+            "tenant_id",
+            "channel_id",
+        ),
+        Index(
+            "uq_ai_visibility_one_active_query_set",
+            "tenant_id",
+            "channel_id",
+            unique=True,
+            postgresql_where=text("status IN ('generating','running')"),
+            sqlite_where=text("status IN ('generating','running')"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(String(36), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    parent_query_set_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("ai_visibility_query_sets.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String(24), default="generating")
+    phase: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    depth: Mapped[str] = mapped_column(String(16), default="quick")
+    job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    classification_json: Mapped[dict] = mapped_column(
+        JSON, default=dict, server_default=text("'{}'")
+    )
+    source_snapshot_json: Mapped[dict] = mapped_column(
+        JSON, default=dict, server_default=text("'{}'")
+    )
+    generation_meta_json: Mapped[dict] = mapped_column(
+        JSON, default=dict, server_default=text("'{}'")
+    )
+    total_questions: Mapped[int] = mapped_column(Integer, default=0)
+    completed_questions: Mapped[int] = mapped_column(Integer, default=0)
+    failed_questions: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class AiVisibilityQuestion(Base):
+    """One generated customer question and its research lifecycle."""
+
+    __tablename__ = "ai_visibility_questions"
+    __table_args__ = (
+        UniqueConstraint(
+            "query_set_id",
+            "question_key",
+            name="uq_ai_visibility_question_key",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "channel_id",
+            "normalized_question_hash",
+            name="uq_ai_visibility_generated_question_hash",
+        ),
+        UniqueConstraint(
+            "query_set_id",
+            "position",
+            name="uq_ai_visibility_question_position",
+        ),
+        Index(
+            "ix_ai_visibility_questions_tenant_channel",
+            "tenant_id",
+            "channel_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    query_set_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("ai_visibility_query_sets.id", ondelete="CASCADE")
+    )
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    channel_id: Mapped[str] = mapped_column(String(36), index=True)
+    question_key: Mapped[str] = mapped_column(String(40))
+    question_text: Mapped[str] = mapped_column(Text)
+    normalized_question_hash: Mapped[str] = mapped_column(CHAR(64))
+    language: Mapped[str] = mapped_column(String(8))
+    customer_intent: Mapped[str] = mapped_column(String(80))
+    industry_relevance: Mapped[int] = mapped_column(Integer)
+    service_relevance: Mapped[int] = mapped_column(Integer)
+    geographic_context: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    business_relevance_score: Mapped[int] = mapped_column(Integer)
+    research_priority: Mapped[str] = mapped_column(String(4))
+    origin: Mapped[str] = mapped_column(String(16), default="initial")
+    carried_from_question_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("ai_visibility_questions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    prompt_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("ai_visibility_prompts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    position: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class AiVisibilityRun(Base):
     __tablename__ = "ai_visibility_runs"
     __table_args__ = (
@@ -115,6 +245,18 @@ class AiVisibilityRun(Base):
     channel_id: Mapped[str] = mapped_column(String(36), index=True)
     prompt_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("ai_visibility_prompts.id", ondelete="RESTRICT")
+    )
+    query_set_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("ai_visibility_query_sets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    question_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("ai_visibility_questions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     prompt_snapshot: Mapped[str] = mapped_column(Text)
     locale: Mapped[str] = mapped_column(String(8), default="en")
