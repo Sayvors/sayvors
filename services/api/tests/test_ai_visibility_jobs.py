@@ -540,6 +540,40 @@ async def test_job_rejects_locality_only_sources(
 
 
 @pytest.mark.asyncio
+async def test_owned_fallback_survives_abbreviation_dots(
+    db, user_id, channel_id, monkeypatch
+):
+    run, job = await _seed(db, user_id, channel_id)
+
+    async def _search(_tenant, _query, **_kwargs):
+        return [SimpleNamespace(url="https://claude.example", title="Sign in", snippet="")]
+
+    async def _fetch(_db, run_id, rows, **_kwargs):
+        return [], _read_stats([])
+
+    async def _profiles(*_args, **_kwargs):
+        return []
+
+    async def _facts(*_args):
+        return {
+            "name": "Sayvors Company Branch-Al Malqa",
+            "address": "RIYADH Al Malqa Dist. Al Dahnaa, Al Malqa",
+            "website": "https://sayvors.com",
+        }
+
+    monkeypatch.setattr(jobs.search, "search_public_web", _search)
+    monkeypatch.setattr(jobs.sources, "fetch_sources", _fetch)
+    monkeypatch.setattr(jobs.search, "discover_public_profiles", _profiles)
+    monkeypatch.setattr(jobs, "load_branch_facts", _facts)
+
+    result = await jobs.handle_research(job, db)
+    await db.refresh(run)
+    assert result["status"] == "insufficient_evidence", run.error
+    assert "[S1]" in (run.answer_text or "")
+    assert "Dist" in run.answer_text
+
+
+@pytest.mark.asyncio
 async def test_job_marks_insufficient_evidence(
     db, user_id, channel_id, monkeypatch
 ):

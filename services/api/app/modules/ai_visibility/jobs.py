@@ -256,10 +256,18 @@ async def _owned_evidence_fallback(
 ):
     """Build a truthful brief when search finds no third-party coverage."""
     name = str(branch.get("name") or run.prompt_snapshot)
-    address = str(branch.get("address") or "")
+    # Abbreviation dots ("Dist.") would split the templated answer into an
+    # uncited sentence and trip our own citation validator; flatten them and
+    # reuse the cleaned address everywhere (facts, claim, quote, answer).
+    address = " ".join(str(branch.get("address") or "").replace(".", " ").split())
     website = str(branch.get("website") or "")
     maps_url = str(branch.get("maps_url") or "")
-    listing = f"{name} is located at {address}." if address else f"{name} is a verified branch."
+    safe_name = " ".join(name.replace(".", " ").split())
+    listing = (
+        f"{safe_name} is located at {address}."
+        if address
+        else f"{safe_name} is a verified branch."
+    )
     no_coverage = (
         "No independent public page discussing this branch was found in the search results."
     )
