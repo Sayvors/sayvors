@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..llm.gateway import LLMMessage
 from ..llm.providers.registry import list_tenant_models
+from ..memory.service import scrub_pii
 
 # Five fetched snapshots feed one run. Bound every model-supplied collection so
 # a malformed completion cannot create unbounded validation or persistence work.
@@ -22,6 +23,35 @@ MAX_TOTAL_SOURCE_CHARS = 40_000
 RESEARCH_TEMPERATURE = 0.2
 RESEARCH_MAX_TOKENS = 3_000
 RESEARCH_PURPOSE = "ai_visibility_research"
+# Default-deny at the LLM boundary: customer voice, source snapshots, and
+# provenance are not branch facts. Keep only public/merchant business context.
+RESEARCH_BRANCH_FIELDS = (
+    "name",
+    "address",
+    "locality",
+    "country",
+    "region_code",
+    "website",
+    "categories",
+    "description",
+    "services",
+    "hours",
+    "service_area",
+    "opening_date",
+    "declared_services",
+    "products",
+    "workspace_business_type",
+    "vertical_key",
+    "business_description",
+    "business_sells",
+    "not_offered",
+    "offering_text",
+    "audience_languages",
+    "website_title",
+    "website_description",
+    "classification",
+    "uncertainties",
+)
 logger = logging.getLogger(__name__)
 
 
@@ -119,6 +149,11 @@ def _bounded_source_text(sources: list[dict]) -> str:
 def build_messages(
     *, branch: dict, prompt: str, locale: str, sources: list[dict]
 ) -> list[LLMMessage]:
+    """Build an outbound prompt from allowlisted business facts only."""
+    branch_facts = {
+        field: branch[field] for field in RESEARCH_BRANCH_FIELDS if field in branch
+    }
+    clean_prompt = scrub_pii(prompt)
     source_text = _bounded_source_text(sources)
     language = "Arabic" if locale == "ar" else "English"
     system = (
@@ -132,8 +167,8 @@ def build_messages(
         "If evidence is missing or contradictory, say so. Return only valid JSON."
     )
     user = (
-        f"Branch facts:\n{json.dumps(branch, ensure_ascii=False)}\n\n"
-        f"Research question:\n{prompt}\n\nSources:\n{source_text}\n\n"
+        f"Branch facts:\n{json.dumps(branch_facts, ensure_ascii=False)}\n\n"
+        f"Research question:\n{clean_prompt}\n\nSources:\n{source_text}\n\n"
         f"Write the answer in {language}. JSON keys: answer, claims, mentioned, cited, "
         "recommended, incorrect, competitors, suggested_actions. Each claim needs "
         "claim, quote, source_ids, status. Each competitor needs name, quote, source_ids."

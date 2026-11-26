@@ -6,11 +6,12 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from app.modules.ai_visibility import batch_jobs
+from app.modules.ai_visibility import batch_jobs, router
 from app.modules.ai_visibility.models import (
     AiVisibilityPrompt,
     AiVisibilityQuerySet,
     AiVisibilityRun,
+    AiVisibilitySource,
 )
 from app.modules.ai_visibility.questions import GeneratedQuestion
 from app.modules.channels.models import Channel
@@ -70,12 +71,17 @@ def _prompt_body(channel_id, *, text="Best coffee near Al Malqa"):
 
 
 @pytest.mark.asyncio
-async def test_query_set_start_returns_202_and_is_idempotent(client, db, user_id, channel_id):
+async def test_query_set_start_returns_202_and_is_idempotent(
+    client, db, user_id, channel_id, monkeypatch
+):
     body = {"channel_id": channel_id, "depth": "quick"}
     first = client.post("/api/v1/ai-visibility/query-sets", json=body)
     assert first.status_code == 202, first.text
     first_id = first.json()["id"]
     assert first.json()["status"] == "generating"
+    async def _empty_wallet(_tenant_id):
+        return 0
+    monkeypatch.setattr(router, "get_balance", _empty_wallet)
     second = client.post("/api/v1/ai-visibility/query-sets", json=body)
     assert second.status_code == 202
     assert second.json()["id"] == first_id
@@ -141,6 +147,24 @@ async def test_latest_query_set_includes_generated_questions_and_outcomes(
     run.validated_claim_count = 1
     run.evidence_coverage = {"third_party_source_count": 2, "owned_source_count": 0}
     run.completed_at = datetime.now(timezone.utc)
+    db.add_all(
+        [
+            AiVisibilitySource(
+                run_id=run.id,
+                position=0,
+                url="https://reviews.example/sayvors",
+                canonical_url="https://reviews.example/sayvors",
+                excerpt="Sayvors review",
+            ),
+            AiVisibilitySource(
+                run_id=run.id,
+                position=1,
+                url="https://news.example/sayvors",
+                canonical_url="https://news.example/sayvors",
+                excerpt="Sayvors news",
+            ),
+        ]
+    )
     await db.commit()
 
     latest = client.get(f"/api/v1/ai-visibility/query-sets/latest?channel_id={channel_id}")

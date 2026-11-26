@@ -91,6 +91,24 @@ sent to generation. Public text remains untrusted data.
 - `ai_visibility_runs.query_set_id` and `.question_id` are nullable so legacy
   single-prompt runs remain valid.
 
+## Review hardening
+
+- Customer asks/questions are PII-scrubbed at ingestion and again at outbound
+  search/LLM boundaries. The LLM receives an allowlist of business fields, not
+  the full profile snapshot.
+- Global UI jobs apply channel RBAC and use static titles without raw questions.
+- First-child quota failures terminalize the set; dead parent jobs are
+  reconciled; handler re-entry cannot create duplicate children.
+- Partial/failed sets resume pending questions into a new linked version with
+  `carried_from_question_id`, preserving the parent unchanged.
+- Query-set-linked runs are protected from legacy deletion APIs.
+- Canonical punctuation/diacritic-insensitive identity prevents duplicate
+  questions; one-word and morphological `not_offered` exclusions are honored.
+- Adaptive depth is separate from branch version; adaptive origin and parent
+  classification are preserved.
+- Aggregate evidence counts distinct canonical source URLs, not per-question
+  sums.
+
 ## Retention and portability
 
 - Completed query sets: 365 days; failed/partial: 30 days; active sets never

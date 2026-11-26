@@ -17,7 +17,6 @@ vi.mock("@/components/analytics/Controls", () => ({
 vi.mock("@tanstack/react-query", () => ({
   useQuery: vi.fn(),
   useQueryClient: () => query,
-  keepPreviousData: vi.fn(),
 }));
 vi.mock("@/lib/i18n/I18nProvider", async () => {
   const actual = await vi.importActual<typeof import("@/lib/i18n/I18nProvider")>(
@@ -161,5 +160,43 @@ describe("AiVisibilityPage", () => {
     expect(screen.getByLabelText("Customer intent coverage")).toBeInTheDocument();
     expect(screen.getByText("Is Sayvors licensed in Makkah?")).toBeInTheDocument();
     expect(screen.queryByText("Prompt library")).not.toBeInTheDocument();
+  });
+
+  it("labels the action as resume when a partial set has pending questions", () => {
+    channels.value = [{ id: "branch-1", label: "Sayvors Branch" }];
+    const partial = {
+      ...latestData,
+      query_set: { ...latestData.query_set, status: "partial", completed_questions: 0 },
+      questions: [{ ...latestData.questions[0], status: "pending", run_id: null, mentioned: null, cited: null }],
+    };
+    vi.mocked(useQuery).mockReturnValue({ data: partial, isPending: false, isError: false } as never);
+    render(<AiVisibilityPage />);
+    expect(screen.getByRole("button", { name: "Resume research" })).toBeInTheDocument();
+  });
+
+  it("does not render previous-branch data after switching branches", () => {
+    channels.value = [
+      { id: "branch-1", label: "Sayvors Branch" },
+      { id: "branch-2", label: "Jeddah Branch" },
+    ];
+    vi.mocked(useQuery).mockReturnValue({
+      data: latestData,
+      isPending: false,
+      isError: false,
+      isPlaceholderData: true,
+      refetch: vi.fn(),
+    } as never);
+
+    render(<AiVisibilityPage />);
+    expect(screen.getByText("Is Sayvors licensed in Makkah?")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Branch" }), {
+      target: { value: "branch-2" },
+    });
+
+    expect(screen.getByRole("combobox", { name: "Branch" })).toHaveValue("branch-2");
+    expect(screen.queryByText("Is Sayvors licensed in Makkah?")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Evidence coverage")).not.toBeInTheDocument();
+    expect(screen.queryAllByText("recruitment")).toHaveLength(0);
   });
 });

@@ -513,6 +513,8 @@ def classify_industry(profile: dict) -> IndustryMatch:
         ("services", DESCRIPTION_SIGNAL_WEIGHT),
         ("products", DESCRIPTION_SIGNAL_WEIGHT),
         ("website_title", DESCRIPTION_SIGNAL_WEIGHT),
+        ("website_description", DESCRIPTION_SIGNAL_WEIGHT),
+        ("audience_languages", REVIEW_SIGNAL_WEIGHT),
         ("offering_text", DESCRIPTION_SIGNAL_WEIGHT),
         ("business_description", DESCRIPTION_SIGNAL_WEIGHT),
         ("review_themes", REVIEW_SIGNAL_WEIGHT),
@@ -545,6 +547,7 @@ def classify_industry(profile: dict) -> IndustryMatch:
                 _field_text(profile, field)
                 for field in (
                     "description",
+                    "website_description",
                     "services",
                     "products",
                     "offering_text",
@@ -568,6 +571,7 @@ def classify_industry(profile: dict) -> IndustryMatch:
             _field_text(profile, field)
             for field in (
                 "description",
+                "website_description",
                 "services",
                 "products",
                 "offering_text",
@@ -577,12 +581,18 @@ def classify_industry(profile: dict) -> IndustryMatch:
     )
 
 
-def select_intents(match: IndustryMatch) -> tuple[IntentSpec, ...]:
-    """Keep only intents supported by this branch's known services."""
+def select_intents(
+    match: IndustryMatch, not_offered: str = ""
+) -> tuple[IntentSpec, ...]:
+    """Keep only intents supported by known services and not excluded."""
+    excluded = not_offered.casefold()
     intents = INDUSTRY_INTENTS.get(match.industry, INDUSTRY_INTENTS["local_services"])
     return tuple(
         intent
         for intent in intents
-        if not intent.required_service
-        or intent.required_service.casefold() in match.service_text
+        if (not intent.required_service or intent.required_service.casefold() in match.service_text)
+        and not (
+            (intent.required_service and intent.required_service.casefold() in excluded)
+            or intent.key.casefold() in excluded
+        )
     )

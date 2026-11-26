@@ -79,6 +79,10 @@ class ActiveRunDeletion(ValueError):
     pass
 
 
+class QuerySetRunDeletion(ValueError):
+    pass
+
+
 def prompt_hash(text: str) -> str:
     """Hash the case- and whitespace-insensitive prompt identity."""
     normalized = " ".join(text.casefold().split())
@@ -678,7 +682,7 @@ async def retry_run(
         return run
     # Creation owns the shared channel/prompt lock, cooldown, and durable
     # attempt budget so POST /runs and POST /runs/{id}/retry cannot diverge.
-    return await create_run(
+    return await create_run_with_quota(
         db,
         tenant_id,
         run.channel_id,
@@ -698,6 +702,7 @@ async def clear_terminal_runs(
             AiVisibilityRun.tenant_id == tenant_id,
             AiVisibilityRun.channel_id == channel_id,
             AiVisibilityRun.status.not_in(ACTIVE_RUN_STATUSES),
+            AiVisibilityRun.query_set_id.is_(None),
         )
     )
     await db.commit()
@@ -719,6 +724,8 @@ async def delete_run(db: AsyncSession, tenant_id: str, run_id: str) -> bool:
         return False
     if run.status in ACTIVE_RUN_STATUSES:
         raise ActiveRunDeletion("active_run_delete_forbidden")
+    if run.query_set_id is not None:
+        raise QuerySetRunDeletion("query_set_run_delete_forbidden")
     await db.delete(run)
     await db.commit()
     return True

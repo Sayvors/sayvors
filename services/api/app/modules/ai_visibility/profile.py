@@ -18,6 +18,7 @@ from ..analytics.models import ConversationInsight, ReviewInsight
 from ..catalog.models import CatalogItem
 from ..channels.models import BusinessService, Channel
 from ..locations.models import LocationBusinessOverride, LocationProfile
+from ..memory.service import scrub_pii
 from ..profile.models import BusinessProfile
 from ..users.models import User
 from . import search, sources
@@ -88,7 +89,13 @@ def _names(value: Any, *, limit: int = MAX_CUSTOMER_QUESTIONS) -> list[str]:
         if isinstance(item, str):
             name = item.strip()
         elif isinstance(item, dict):
-            name = str(item.get("name") or item.get("question") or "").strip()
+            name = str(
+                item.get("name")
+                or item.get("question")
+                or item.get("topic")
+                or item.get("intent")
+                or ""
+            ).strip()
         else:
             continue
         if name and name not in out:
@@ -96,6 +103,20 @@ def _names(value: Any, *, limit: int = MAX_CUSTOMER_QUESTIONS) -> list[str]:
             if len(out) >= limit:
                 break
     return out
+
+
+def _scrub_question(value: str, *, reviewer_name: str | None = None) -> str:
+    """Scrub identifiers and the one reviewer name known for this review."""
+    question = scrub_pii(value)
+    reviewer = (reviewer_name or "").strip()
+    if reviewer:
+        question = re.sub(
+            rf"(?<!\w){re.escape(reviewer)}(?!\w)",
+            "[customer]",
+            question,
+            flags=re.IGNORECASE,
+        )
+    return " ".join(question.split())
 
 
 async def _workspace_context(db: AsyncSession, tenant_id: str) -> tuple[Any, Any]:
@@ -244,8 +265,9 @@ async def _customer_voice(
                 if name not in themes:
                     themes.append(name)
         meaning = row.meaning if isinstance(row.meaning, dict) else {}
-        for question in _names(meaning.get("asks") or []):
-            if question not in questions:
+        for raw_question in _names(meaning.get("asks") or []):
+            question = _scrub_question(raw_question, reviewer_name=row.reviewer_name)
+            if question and question not in questions:
                 questions.append(question)
     insight = (
         await db.execute(
@@ -258,8 +280,9 @@ async def _customer_voice(
     intents: list[str] = []
     if insight and isinstance(insight.insights, dict):
         payload = insight.insights
-        for question in _names(payload.get("top_questions") or []):
-            if question not in questions:
+        for raw_question in _names(payload.get("top_questions") or []):
+            question = _scrub_question(raw_question)
+            if question and question not in questions:
                 questions.append(question)
         for topic in _names(payload.get("topics") or []):
             if topic not in themes:

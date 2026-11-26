@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.modules.ai_visibility import batch_jobs, query_sets
 from app.modules.ai_visibility.models import (
+    AiVisibilityPrompt,
     AiVisibilityQuestion,
     AiVisibilityQuerySet,
     AiVisibilityRun,
@@ -110,6 +111,9 @@ async def test_query_set_job_persists_questions_and_starts_first_run(
     assert run.query_set_id == query_set.id
     assert run.question_id == rows[0].id
     assert run.status == "queued"
+    child = await db.get(Job, run.job_id)
+    assert child.ui_title == "Customer question research"
+    assert rows[0].question_text not in child.ui_title
 
 
 @pytest.mark.asyncio
@@ -178,6 +182,107 @@ async def test_query_set_job_skips_questions_that_already_exist(
     await db.refresh(query_set)
     assert result["status"] == "failed"
     assert query_set.failure_code == "no_new_questions"
+
+
+@pytest.mark.asyncio
+async def test_prompt_limit_failure_rolls_back_partial_questions(
+    db, user_id, channel_id, monkeypatch
+):
+    query_set = await query_sets.start_query_set(db, user_id, channel_id)
+    job = await db.get(Job, query_set.job_id)
+    job.status = "running"
+    job.lease_owner = "worker-1"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    await db.commit()
+
+    async def _profile(*_args):
+        return {"name": "Sayvors", "categories": {"primary": "Recruitment office"}}
+
+    async def _questions(*_args, **_kwargs):
+        return [
+            _question("Is Sayvors licensed?", intent="licensing"),
+            _question("Does Sayvors recruit workers?", intent="services"),
+        ]
+
+    monkeypatch.setattr(batch_jobs.profile, "load_business_profile", _profile)
+    monkeypatch.setattr(batch_jobs.questions, "generate_questions", _questions)
+    monkeypatch.setattr(batch_jobs.service, "MAX_ACTIVE_PROMPTS_PER_BRANCH", 1)
+
+    result = await batch_jobs.handle_query_set(job, db)
+    await db.refresh(query_set)
+    assert result["status"] == "failed"
+    assert query_set.failure_code == "active_prompt_limit"
+    assert (
+        await db.execute(
+            select(AiVisibilityQuestion).where(AiVisibilityQuestion.query_set_id == query_set.id)
+        )
+    ).scalars().all() == []
+    assert (await db.execute(select(AiVisibilityPrompt))).scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_first_child_quota_failure_terminalizes_set(
+    db, user_id, channel_id, monkeypatch
+):
+    query_set = await query_sets.start_query_set(db, user_id, channel_id)
+    job = await db.get(Job, query_set.job_id)
+    job.status = "running"
+    job.lease_owner = "worker-1"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    await db.commit()
+
+    async def _profile(*_args):
+        return {"name": "Sayvors", "categories": {"primary": "Recruitment office"}}
+
+    async def _questions(*_args, **_kwargs):
+        return [_question("Is Sayvors licensed in Makkah?", intent="licensing")]
+
+    async def _quota(*_args, **_kwargs):
+        raise batch_jobs.service.ResearchQuotaExceeded("quota")
+
+    monkeypatch.setattr(batch_jobs.profile, "load_business_profile", _profile)
+    monkeypatch.setattr(batch_jobs.questions, "generate_questions", _questions)
+    monkeypatch.setattr(batch_jobs.service, "create_run_with_quota", _quota)
+
+    result = await batch_jobs.handle_query_set(job, db)
+    await db.refresh(query_set)
+    assert result["status"] == "partial"
+    assert query_set.status == "partial"
+    assert query_set.failure_code == "research_quota_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_finalizer_reconciles_dead_parent_job(db, user_id, channel_id):
+    query_set = await query_sets.start_query_set(db, user_id, channel_id)
+    job = await db.get(Job, query_set.job_id)
+    job.status = "dead"
+    await db.commit()
+
+    processed = await batch_jobs.finalize_due_query_sets(db)
+    await db.refresh(query_set)
+    assert processed == 1
+    assert query_set.status == "failed"
+    assert query_set.failure_code == "generation_job_failed"
+
+
+@pytest.mark.asyncio
+async def test_handler_reentry_does_not_start_a_second_run(
+    db, user_id, channel_id, monkeypatch
+):
+    query_set = await _seed_two_question_set(db, user_id, channel_id, monkeypatch)
+    job = await db.get(Job, query_set.job_id)
+    job.status = "running"
+    job.lease_owner = "worker-2"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    await db.commit()
+
+    await batch_jobs.handle_query_set(job, db)
+    runs = (
+        await db.execute(
+            select(AiVisibilityRun).where(AiVisibilityRun.query_set_id == query_set.id)
+        )
+    ).scalars().all()
+    assert len(runs) == 1
 
 
 @pytest.mark.asyncio
@@ -323,7 +428,9 @@ async def test_finalizer_creates_adaptive_version_for_grounded_competitor(
     assert len(versions) == 2
     assert versions[0].status == "completed"
     assert versions[1].version == 2
+    assert versions[1].adaptive_depth == 1
     assert versions[1].parent_query_set_id == versions[0].id
+    assert versions[1].classification_json == versions[0].classification_json
     assert versions[1].generation_meta_json["adaptive_questions"]
     assert any(
         "Rival Recruitment" in row["question_text"]
@@ -343,7 +450,62 @@ async def test_finalizer_creates_adaptive_version_for_grounded_competitor(
         )
     ).scalars().all()
     assert followup_rows
+    assert followup_rows[0].origin == "adaptive"
     assert followup_rows[0].run_id
+
+
+@pytest.mark.asyncio
+async def test_adaptive_cap_uses_cycle_depth_not_branch_version(
+    db, user_id, channel_id
+):
+    from types import SimpleNamespace
+
+    query_set = AiVisibilityQuerySet(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        version=5,
+        adaptive_depth=0,
+        status="running",
+        phase="researching",
+        depth="quick",
+        classification_json={"industry": "recruitment"},
+        source_snapshot_json={"name": "Sayvors", "locality": "Makkah"},
+    )
+    db.add(query_set)
+    await db.flush()
+    question = AiVisibilityQuestion(
+        query_set_id=query_set.id,
+        tenant_id=user_id,
+        channel_id=channel_id,
+        question_key="q001",
+        question_text="Is Sayvors licensed?",
+        normalized_question_hash="b" * 64,
+        language="en",
+        customer_intent="licensing",
+        industry_relevance=90,
+        service_relevance=95,
+        business_relevance_score=92,
+        research_priority="P1",
+        status="completed",
+        position=0,
+    )
+    db.add(question)
+    await db.commit()
+    runs = {
+        "run-1": SimpleNamespace(
+            status="completed",
+            competitor_mentions=[
+                {"name": "Rival Recruitment", "quote": "Rival is recommended", "source_ids": ["S1"]}
+            ],
+        )
+    }
+
+    followup = await batch_jobs._maybe_create_adaptive_version(
+        db, query_set, [question], runs
+    )
+    assert followup is not None
+    assert followup.version == 6
+    assert followup.adaptive_depth == 1
 
 
 @pytest.mark.asyncio

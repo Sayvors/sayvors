@@ -197,6 +197,7 @@ const en = {
     tipDepth: "Quick scan reads fewer pages. Deep research runs more searches and reads up to 6 pages, so it uses more AI credit.",
     runAll: "Run all active prompts",
     researchMyBranch: "Research my branch",
+    resumeResearch: "Resume research",
     backgroundTitle: "Research in progress",
     backgroundBody: "We are researching customer questions for this branch. You can leave this page and come back later.",
     backgroundPreparing: "Preparing business-specific questions",

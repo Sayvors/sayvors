@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..channels.models import Channel
 from ..jobs.service import submit_job
-from .models import AiVisibilityQuerySet, AiVisibilityQuestion, AiVisibilityRun
+from .models import (
+    AiVisibilityQuerySet,
+    AiVisibilityQuestion,
+    AiVisibilityRun,
+    AiVisibilitySource,
+)
 
 ACTIVE_QUERY_SET_STATUSES = ("generating", "running")
 QUERY_SET_JOB_TYPE = "ai_visibility.query_set"
@@ -16,6 +22,22 @@ QUERY_SET_JOB_TYPE = "ai_visibility.query_set"
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def get_active_query_set(
+    db: AsyncSession, tenant_id: str, channel_id: str
+) -> AiVisibilityQuerySet | None:
+    return (
+        await db.execute(
+            select(AiVisibilityQuerySet)
+            .where(
+                AiVisibilityQuerySet.tenant_id == tenant_id,
+                AiVisibilityQuerySet.channel_id == channel_id,
+                AiVisibilityQuerySet.status.in_(ACTIVE_QUERY_SET_STATUSES),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
 
 
 async def start_query_set(
@@ -42,17 +64,7 @@ async def start_query_set(
     ).scalar_one_or_none()
     if channel is None:
         raise ValueError("channel_not_owned")
-    existing = (
-        await db.execute(
-            select(AiVisibilityQuerySet)
-            .where(
-                AiVisibilityQuerySet.tenant_id == tenant_id,
-                AiVisibilityQuerySet.channel_id == channel_id,
-                AiVisibilityQuerySet.status.in_(ACTIVE_QUERY_SET_STATUSES),
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    existing = await get_active_query_set(db, tenant_id, channel_id)
     if existing is not None:
         return existing
     version = int(
@@ -66,16 +78,78 @@ async def start_query_set(
         ).scalar()
         or 0
     ) + 1
+    latest = (
+        await db.execute(
+            select(AiVisibilityQuerySet)
+            .where(
+                AiVisibilityQuerySet.tenant_id == tenant_id,
+                AiVisibilityQuerySet.channel_id == channel_id,
+            )
+            .order_by(AiVisibilityQuerySet.version.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    pending = (
+        list(
+            (
+                await db.execute(
+                    select(AiVisibilityQuestion)
+                    .where(
+                        AiVisibilityQuestion.query_set_id == latest.id,
+                        AiVisibilityQuestion.status == "pending",
+                        AiVisibilityQuestion.prompt_id.is_not(None),
+                    )
+                    .order_by(AiVisibilityQuestion.position)
+                )
+            ).scalars().all()
+        )
+        if latest is not None and latest.status in {"partial", "failed"}
+        else []
+    )
+    resuming = bool(pending)
     query_set = AiVisibilityQuerySet(
         tenant_id=tenant_id,
         channel_id=channel_id,
         version=version,
+        parent_query_set_id=latest.id if resuming else None,
+        adaptive_depth=latest.adaptive_depth if resuming and latest else 0,
         status="generating",
-        phase="queued",
+        phase="resume" if resuming else "queued",
         depth=depth,
+        classification_json=dict(latest.classification_json or {}) if resuming and latest else {},
+        source_snapshot_json=dict(latest.source_snapshot_json or {}) if resuming and latest else {},
+        generation_meta_json=(
+            {"generator": "resume-v1", "resume_from": latest.id}
+            if resuming and latest
+            else {}
+        ),
+        total_questions=len(pending),
         started_at=_now(),
     )
     db.add(query_set)
+    await db.flush()
+    for index, old in enumerate(pending):
+        db.add(
+            AiVisibilityQuestion(
+                query_set_id=query_set.id,
+                tenant_id=tenant_id,
+                channel_id=channel_id,
+                question_key=f"q{index + 1:03d}",
+                question_text=old.question_text,
+                normalized_question_hash=old.normalized_question_hash,
+                language=old.language,
+                customer_intent=old.customer_intent,
+                industry_relevance=old.industry_relevance,
+                service_relevance=old.service_relevance,
+                geographic_context=old.geographic_context,
+                business_relevance_score=old.business_relevance_score,
+                research_priority=old.research_priority,
+                origin="resume",
+                carried_from_question_id=old.id,
+                prompt_id=old.prompt_id,
+                position=index,
+            )
+        )
     await db.flush()
     job = await submit_job(
         db,
@@ -87,7 +161,7 @@ async def start_query_set(
         subject_id=query_set.id,
         lane_key=f"ai-visibility-query-set:{channel_id}",
     )
-    job.ui_title = f"Researching {channel.display_name}"
+    job.ui_title = "Business research"
     job.ui_kind = "ai_visibility"
     job.ui_visible = True
     job.progress = 0
@@ -102,6 +176,7 @@ def query_set_payload(query_set: AiVisibilityQuerySet) -> dict:
         "id": query_set.id,
         "channel_id": query_set.channel_id,
         "version": query_set.version,
+        "adaptive_depth": query_set.adaptive_depth,
         "parent_query_set_id": query_set.parent_query_set_id,
         "status": query_set.status,
         "phase": query_set.phase,
@@ -216,19 +291,51 @@ async def latest_query_set(
             1,
         )
 
-    independent = 0
-    owned = 0
     validated = 0
-    sources = 0
     platforms_found = 0
     for run in runs.values():
         coverage = run.evidence_coverage or {}
-        independent += int(coverage.get("third_party_source_count") or 0)
-        owned += int(coverage.get("owned_source_count") or 0)
         validated += int(run.validated_claim_count or 0)
-        sources += int(run.source_count or 0)
         metrics = coverage.get("metrics") or {}
         platforms_found = max(platforms_found, int(metrics.get("platforms_found") or 0))
+    snapshot = latest.source_snapshot_json or {}
+    owned_hosts: set[str] = set()
+    for key in ("website", "maps_url"):
+        value = str(snapshot.get(key) or "")
+        if value:
+            candidate = value if "//" in value else f"https://{value}"
+            host = (urlsplit(candidate).hostname or "").casefold().removeprefix("www.")
+            if host:
+                owned_hosts.add(host)
+    public_website = ((snapshot.get("public_context") or {}).get("website") or {})
+    public_url = str(public_website.get("url") or "")
+    if public_url:
+        host = (urlsplit(public_url).hostname or "").casefold().removeprefix("www.")
+        if host:
+            owned_hosts.add(host)
+    unique_sources: dict[str, str] = {}
+    if run_ids:
+        source_rows = (
+            await db.execute(
+                select(AiVisibilitySource).where(AiVisibilitySource.run_id.in_(run_ids))
+            )
+        ).scalars().all()
+        for row in source_rows:
+            key = row.canonical_url or row.url
+            unique_sources.setdefault(key, row.url)
+    independent = 0
+    owned = 0
+    for source_url in unique_sources.values():
+        host = (urlsplit(source_url).hostname or "").casefold().removeprefix("www.")
+        is_owned = any(
+            host == domain or host.endswith(f".{domain}")
+            for domain in owned_hosts
+        )
+        if is_owned:
+            owned += 1
+        else:
+            independent += 1
+    sources = len(unique_sources)
     return {
         "query_set": query_set_payload(latest),
         "questions": question_payloads,

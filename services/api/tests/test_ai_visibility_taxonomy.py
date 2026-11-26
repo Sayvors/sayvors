@@ -78,6 +78,13 @@ def test_workspace_offering_text_can_classify_a_branch_without_category():
     assert match.confidence > 0.5
 
 
+def test_website_description_can_classify_a_sparse_profile():
+    match = classify_industry(
+        {"name": "MenteE", "website_description": "AI research lab and software development"}
+    )
+    assert match.industry == "software_company"
+
+
 def test_each_required_industry_has_its_own_customer_intents():
     cases = (
         ("school", "International School", "admissions"),

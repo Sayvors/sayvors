@@ -47,6 +47,23 @@ def test_build_query_does_not_repeat_the_entity():
     assert query.casefold().count("sayvors") == 1
 
 
+def test_build_query_scrubs_pii_from_prompt_and_preserves_business_grounding():
+    query = search.build_query(
+        "Can jane.doe@example.com call +966 50 123 4567 about "
+        "https://private.example/customer/123456789?",
+        {"name": "Acme Coffee", "address": "Public Market, Riyadh"},
+    )
+
+    assert query.startswith("Acme Coffee")
+    assert "Public Market, Riyadh" in query
+    assert "jane.doe@example.com" not in query
+    assert "+966 50 123 4567" not in query
+    assert "https://private.example/customer/123456789" not in query
+    assert "[email]" in query
+    assert "[phone]" in query
+    assert "[link]" in query
+
+
 def test_rejects_non_http_results():
     results = [
         search.SearchResult(url="javascript:alert(1)", title="bad", snippet=""),

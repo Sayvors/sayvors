@@ -121,6 +121,7 @@ class AiVisibilityQuerySet(Base):
     tenant_id: Mapped[str] = mapped_column(String(36), index=True)
     channel_id: Mapped[str] = mapped_column(String(36), index=True)
     version: Mapped[int] = mapped_column(Integer)
+    adaptive_depth: Mapped[int] = mapped_column(Integer, default=0)
     parent_query_set_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("ai_visibility_query_sets.id", ondelete="SET NULL"),
@@ -165,12 +166,6 @@ class AiVisibilityQuestion(Base):
             "query_set_id",
             "question_key",
             name="uq_ai_visibility_question_key",
-        ),
-        UniqueConstraint(
-            "tenant_id",
-            "channel_id",
-            "normalized_question_hash",
-            name="uq_ai_visibility_generated_question_hash",
         ),
         UniqueConstraint(
             "query_set_id",

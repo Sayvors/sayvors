@@ -3,8 +3,13 @@ from uuid import uuid4
 
 import pytest
 
-from app.modules.ai_visibility.models import AiVisibilityPrompt, AiVisibilityRun
+from app.modules.ai_visibility.models import (
+    AiVisibilityPrompt,
+    AiVisibilityQuerySet,
+    AiVisibilityRun,
+)
 from app.modules.channels.models import Channel
+from app.modules.jobs.models import Job
 from tests.test_team_rbac import _auth_as, _seed_member
 
 
@@ -102,6 +107,44 @@ async def test_channel_none_blocks_object_addressed_routes(client, db, user_id, 
     assert client.delete(
         f"/api/v1/ai-visibility/runs/{run.id}"
     ).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_channel_none_hides_background_research_jobs(
+    client, db, user_id, branch_id
+):
+    query_set = AiVisibilityQuerySet(
+        id="restricted-query-set",
+        tenant_id=user_id,
+        channel_id=branch_id,
+        version=1,
+        status="generating",
+        depth="quick",
+    )
+    db.add(query_set)
+    await db.flush()
+    db.add(
+        Job(
+            id="restricted-query-job",
+            tenant_id=user_id,
+            job_type="ai_visibility.query_set",
+            lane="bulk",
+            status="queued",
+            payload={"query_set_id": query_set.id},
+            lane_key="restricted-query",
+            ui_visible=True,
+            ui_title="Researching restricted branch",
+        )
+    )
+    await db.commit()
+    _member, member_user = await _seed_member(
+        db, role_name="Admin", overrides={branch_id: "none"}
+    )
+    _auth_as(member_user)
+
+    response = client.get("/api/v1/jobs/active-ui")
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 @pytest.mark.asyncio

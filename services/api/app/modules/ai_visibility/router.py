@@ -105,6 +105,11 @@ async def start_query_set(
     db: AsyncSession = Depends(get_db),
 ) -> QuerySetOut:
     _authorize_channel(ctx, body.channel_id, write=True)
+    existing = await query_sets.get_active_query_set(
+        db, ctx.tenant_id, body.channel_id
+    )
+    if existing is not None:
+        return QuerySetOut(**query_sets.query_set_payload(existing))
     if not settings.TESTING and not await rate_limit(
         f"ai-vis:query-set:{ctx.tenant_id}",
         RUN_CREATE_RATE_LIMIT,
@@ -436,6 +441,8 @@ async def retry_run(
         raise HTTPException(
             409, str(exc), headers={"Retry-After": "3600"}
         ) from exc
+    except service.ResearchQuotaExceeded as exc:
+        raise HTTPException(403, str(exc)) from exc
     if row is None:
         raise HTTPException(404, "run_not_found")
     return _run_out(row)
@@ -462,6 +469,8 @@ async def delete_run(
     try:
         deleted = await service.delete_run(db, ctx.tenant_id, run_id)
     except service.ActiveRunDeletion as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except service.QuerySetRunDeletion as exc:
         raise HTTPException(409, str(exc)) from exc
     if not deleted:
         raise HTTPException(404, "run_not_found")

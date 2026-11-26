@@ -1,5 +1,6 @@
 """Versioned business-aware query sets and their generated questions."""
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.modules.ai_visibility.models import (
@@ -103,18 +104,24 @@ async def test_only_one_active_query_set_per_branch(db, user_id, channel_id):
 
 
 @pytest.mark.asyncio
-async def test_generated_question_hash_is_unique_across_versions(
+async def test_generated_question_text_can_repeat_in_resumed_version(
     db, user_id, channel_id
 ):
-    first = _set(user_id, channel_id, version=1, status="completed")
+    first = _set(user_id, channel_id, version=1, status="partial")
     second = _set(user_id, channel_id, version=2, status="running")
+    second.parent_query_set_id = first.id
+    second.adaptive_depth = 0
     db.add_all([first, second])
     await db.flush()
-    db.add_all(
-        [
-            _question(first, "Is Sayvors licensed in Makkah?"),
-            _question(second, "Is Sayvors licensed in Makkah?", key="q2"),
-        ]
-    )
-    with pytest.raises(IntegrityError):
-        await db.commit()
+    first_question = _question(first, "Is Sayvors licensed in Makkah?")
+    db.add(first_question)
+    await db.flush()
+    carried = _question(second, "Is Sayvors licensed in Makkah?", key="q2")
+    carried.origin = "resume"
+    carried.carried_from_question_id = first_question.id
+    db.add(carried)
+    await db.commit()
+
+    rows = (await db.execute(select(AiVisibilityQuestion))).scalars().all()
+    assert len(rows) == 2
+    assert second.adaptive_depth == 0

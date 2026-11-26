@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useGoogleChannels } from "@/components/analytics/Controls";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { queryKeys } from "@/lib/query-keys";
@@ -64,7 +64,6 @@ export default function AiVisibilityPage() {
     enabled: !!channelId,
     staleTime: QUERY_STALE_TIME,
     gcTime: QUERY_GC_TIME,
-    placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
     refetchInterval: (query) =>
       query.state.data && ACTIVE_QUERY_SET_STATUSES.has(query.state.data.query_set.status)
@@ -109,7 +108,11 @@ export default function AiVisibilityPage() {
     latest.isError &&
     latest.error instanceof Error &&
     latest.error.message.includes("query_set_not_found");
-  const data = latest.data;
+  const data =
+    latest.data && latest.data.query_set.channel_id === channelId ? latest.data : undefined;
+  const canResume =
+    data?.query_set.status === "partial" &&
+    data.questions.some((question) => question.status === "pending");
   const classification = data?.query_set.classification ?? {};
   const uncertainties = Array.isArray(classification.uncertainties)
     ? classification.uncertainties.map(String)
@@ -153,7 +156,7 @@ export default function AiVisibilityPage() {
             <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden="true">
               <path d="M3 10h3l2-5 4 10 2-5h3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            {starting ? copy.running : copy.researchMyBranch}
+            {starting ? copy.running : canResume ? copy.resumeResearch : copy.researchMyBranch}
           </button>
         </div>
       </header>

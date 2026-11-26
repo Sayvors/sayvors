@@ -60,6 +60,21 @@ def test_questions_include_metadata_and_are_deduplicated():
         assert row.priority in {"P0", "P1", "P2"}
 
 
+def test_audience_languages_enable_arabic_outside_saudi():
+    questions = generate_questions(
+        {
+            "name": "MenteE",
+            "categories": {"category": "Software company"},
+            "description": "Software development",
+            "address": "Mingora, Pakistan",
+            "audience_languages": "Arabic, English",
+        },
+        limit=6,
+    )
+    assert questions[0].language == "ar"
+    assert {row.language for row in questions} == {"ar", "en"}
+
+
 def test_unsupported_service_question_is_not_generated():
     questions = generate_questions(
         {
@@ -146,3 +161,37 @@ def test_relevant_customer_question_is_kept_ahead_of_templates():
     )
     assert questions[0].question_text == "Does Sayvors automate Google review replies?"
     assert questions[0].service_relevance >= 90
+
+
+def test_punctuation_variants_are_deduplicated():
+    questions = generate_questions(
+        {
+            "name": "Sayvors",
+            "categories": {"category": "Restaurant"},
+            "description": "Restaurant with delivery",
+            "services": ["Delivery"],
+            "address": "Makkah",
+            "customer_questions": ["Does Sayvors deliver?", "Does Sayvors deliver"],
+        },
+        limit=8,
+    )
+    assert sum(
+        text in {"Does Sayvors deliver?", "Does Sayvors deliver"}
+        for text in [row.question_text for row in questions]
+    ) == 1
+
+
+def test_single_word_not_offered_exclusion_filters_questions_and_intents():
+    questions = generate_questions(
+        {
+            "name": "Sayvors",
+            "categories": {"category": "Restaurant"},
+            "description": "Restaurant with delivery",
+            "services": ["Delivery"],
+            "address": "Makkah",
+            "not_offered": "delivery",
+            "customer_questions": ["Does Sayvors deliver?"],
+        },
+        limit=8,
+    )
+    assert not any("deliver" in row.question_text.casefold() for row in questions)

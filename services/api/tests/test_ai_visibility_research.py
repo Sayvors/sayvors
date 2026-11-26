@@ -30,6 +30,63 @@ def test_build_messages_contains_only_numbered_sources():
     assert "Use only the supplied sources" in payload
 
 
+def test_build_messages_allowlists_non_sensitive_branch_facts():
+    messages = research.build_messages(
+        branch={
+            "name": "Acme Coffee",
+            "address": "Public Market, Riyadh",
+            "website": "https://acme.example",
+            "description": "Coffee shop",
+            "customer_questions": ["CUSTOMER_QUESTION_PRIVATE"],
+            "review_themes": ["REVIEW_THEME_PRIVATE"],
+            "public_context": {"website": {"excerpt": "PUBLIC_CONTEXT_PRIVATE"}},
+            "source_fields": ["SOURCE_FIELDS_PRIVATE"],
+            "customer_intents": ["CUSTOMER_INTENT_PRIVATE"],
+            "reviewer_name": "REVIEWER_PRIVATE",
+            "unknown_customer_data": "UNKNOWN_CUSTOMER_PRIVATE",
+        },
+        prompt="Best coffee near Malqa",
+        locale="en",
+        sources=[_source("src-1", "Acme has fresh beans.")],
+    )
+    payload = "\n".join(message.content for message in messages)
+
+    assert '"name": "Acme Coffee"' in payload
+    assert '"address": "Public Market, Riyadh"' in payload
+    assert '"website": "https://acme.example"' in payload
+    assert '"description": "Coffee shop"' in payload
+    for private_marker in (
+        "CUSTOMER_QUESTION_PRIVATE",
+        "REVIEW_THEME_PRIVATE",
+        "PUBLIC_CONTEXT_PRIVATE",
+        "SOURCE_FIELDS_PRIVATE",
+        "CUSTOMER_INTENT_PRIVATE",
+        "REVIEWER_PRIVATE",
+        "UNKNOWN_CUSTOMER_PRIVATE",
+    ):
+        assert private_marker not in payload
+
+
+def test_build_messages_scrubs_pii_from_research_prompt():
+    messages = research.build_messages(
+        branch={"name": "Acme Coffee"},
+        prompt=(
+            "Can jane.doe@example.com call +966 50 123 4567 or open "
+            "https://private.example/customer/123456789?"
+        ),
+        locale="en",
+        sources=[_source("src-1", "Acme has fresh beans.")],
+    )
+    payload = "\n".join(message.content for message in messages)
+
+    assert "jane.doe@example.com" not in payload
+    assert "+966 50 123 4567" not in payload
+    assert "https://private.example/customer/123456789" not in payload
+    assert "[email]" in payload
+    assert "[phone]" in payload
+    assert "[link]" in payload
+
+
 def test_parse_structured_response_rejects_invalid_json():
     with pytest.raises(research.ResearchValidationError):
         research.parse_response("not json", [_source("src-1", "Evidence")])

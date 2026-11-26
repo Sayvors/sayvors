@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -74,6 +75,8 @@ def _classification(profile_data: dict) -> dict:
 def _source_snapshot(profile_data: dict) -> dict:
     keys = (
         "name",
+        "website",
+        "maps_url",
         "categories",
         "description",
         "services",
@@ -108,26 +111,37 @@ async def _persist_questions(
     )
     if existing:
         return existing
-    question_hashes = set(
+    existing_questions = list(
         (
             await db.execute(
-                select(AiVisibilityQuestion.normalized_question_hash).where(
+                select(AiVisibilityQuestion)
+                .where(
                     AiVisibilityQuestion.tenant_id == query_set.tenant_id,
                     AiVisibilityQuestion.channel_id == query_set.channel_id,
                 )
+                .limit(500)
             )
         ).scalars().all()
     )
-    prompt_hashes = set(
+    question_hashes = {row.normalized_question_hash for row in existing_questions}
+    question_identities = {
+        questions._normalize(row.question_text) for row in existing_questions
+    }
+    existing_prompts = list(
         (
             await db.execute(
-                select(AiVisibilityPrompt.normalized_prompt_hash).where(
+                select(AiVisibilityPrompt)
+                .where(
                     AiVisibilityPrompt.tenant_id == query_set.tenant_id,
                     AiVisibilityPrompt.channel_id == query_set.channel_id,
                 )
+                .limit(service.MAX_PROMPT_LIST)
             )
         ).scalars().all()
     )
+    prompt_by_identity = {
+        questions._normalize(row.prompt_text): row for row in existing_prompts
+    }
     active_count = int(
         (
             await db.execute(
@@ -141,9 +155,25 @@ async def _persist_questions(
         or 0
     )
     rows: list[AiVisibilityQuestion] = []
+    origin = (
+        "adaptive"
+        if (query_set.generation_meta_json or {}).get("generator")
+        == ADAPTIVE_GENERATOR_VERSION
+        else "initial"
+    )
     for item in generated:
-        digest = service.prompt_hash(item.question_text)
-        if digest in question_hashes or digest in prompt_hashes:
+        identity = questions._normalize(item.question_text)
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        legacy_digest = service.prompt_hash(item.question_text)
+        if (
+            digest in question_hashes
+            or legacy_digest in question_hashes
+            or identity in question_identities
+        ):
+            continue
+        if identity in prompt_by_identity:
+            # A matching prompt already represents this customer question;
+            # do not spend quota researching it again in a new set.
             continue
         if active_count >= service.MAX_ACTIVE_PROMPTS_PER_BRANCH:
             raise service.PromptLimitReached("active_prompt_limit")
@@ -152,12 +182,14 @@ async def _persist_questions(
             channel_id=query_set.channel_id,
             title=f"{item.intent} · {item.language}"[:200],
             prompt_text=item.question_text,
-            normalized_prompt_hash=digest,
+            normalized_prompt_hash=legacy_digest,
             intent=item.intent,
             created_by=query_set.tenant_id,
         )
         db.add(prompt)
         await db.flush()
+        prompt_by_identity[identity] = prompt
+        active_count += 1
         row = AiVisibilityQuestion(
             query_set_id=query_set.id,
             tenant_id=query_set.tenant_id,
@@ -172,15 +204,14 @@ async def _persist_questions(
             geographic_context=item.geographic_context,
             business_relevance_score=item.business_relevance_score,
             research_priority=item.priority,
-            origin="initial",
+            origin=origin,
             prompt_id=prompt.id,
             position=len(rows),
         )
         db.add(row)
         rows.append(row)
         question_hashes.add(digest)
-        prompt_hashes.add(digest)
-        active_count += 1
+        question_identities.add(identity)
     await db.commit()
     return rows
 
@@ -207,7 +238,7 @@ async def _start_question_run(
     if run.job_id:
         child = await db.get(Job, run.job_id)
         if child is not None:
-            child.ui_title = f"Researching: {question.question_text[:80]}"
+            child.ui_title = "Customer question research"
             child.ui_kind = "ai_visibility"
             child.ui_visible = True
             child.progress = 0
@@ -219,7 +250,7 @@ async def _start_question_run(
 async def handle_query_set(job: Job, db: AsyncSession) -> dict:
     """Generate one versioned question set and start its first child run."""
     query_set = await _load_query_set(db, job)
-    if query_set.status in {"completed", "failed", "partial"}:
+    if query_set.status in {"completed", "failed", "partial", "running"}:
         return {"status": query_set.status, "query_set_id": query_set.id}
     rows = list(
         (
@@ -263,8 +294,9 @@ async def handle_query_set(job: Job, db: AsyncSession) -> dict:
                 profile_data, limit=questions.MAX_INITIAL_QUESTIONS
             )
         query_set = await _load_query_set(db, job)
-        query_set.classification_json = _classification(profile_data)
-        query_set.source_snapshot_json = _source_snapshot(profile_data)
+        if not adaptive_raw:
+            query_set.classification_json = _classification(profile_data)
+            query_set.source_snapshot_json = _source_snapshot(profile_data)
         meta = dict(query_set.generation_meta_json or {})
         meta.update(
             {
@@ -284,12 +316,16 @@ async def handle_query_set(job: Job, db: AsyncSession) -> dict:
         try:
             rows = await _persist_questions(db, query_set, generated)
         except service.PromptLimitReached:
-            query_set.status = "failed"
-            query_set.failure_code = "active_prompt_limit"
-            query_set.error = "The branch reached its active research-question limit."
-            query_set.completed_at = _now()
-            await db.commit()
-            return {"status": "failed", "query_set_id": query_set.id}
+            query_set_id = query_set.id
+            await db.rollback()
+            query_set = await db.get(AiVisibilityQuerySet, query_set_id)
+            if query_set is not None:
+                query_set.status = "failed"
+                query_set.failure_code = "active_prompt_limit"
+                query_set.error = "The branch reached its active research-question limit."
+                query_set.completed_at = _now()
+                await db.commit()
+            return {"status": "failed", "query_set_id": query_set_id}
         except IntegrityError:
             query_set_id = query_set.id
             await db.rollback()
@@ -309,9 +345,32 @@ async def handle_query_set(job: Job, db: AsyncSession) -> dict:
         await db.commit()
         return {"status": "failed", "query_set_id": query_set.id}
     query_set.total_questions = len(rows)
+    active_linked = (
+        await db.execute(
+            select(AiVisibilityRun)
+            .where(
+                AiVisibilityRun.query_set_id == query_set.id,
+                AiVisibilityRun.status.in_(service.ACTIVE_RUN_STATUSES),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if active_linked is not None:
+        query_set.status = "running"
+        query_set.phase = active_linked.status
+        await db.commit()
+        return {"status": "running", "query_set_id": query_set.id}
     next_question = next((row for row in rows if not row.run_id), None)
     if next_question is not None:
-        await _start_question_run(db, query_set, next_question)
+        try:
+            await _start_question_run(db, query_set, next_question)
+        except service.ResearchQuotaExceeded:
+            query_set.status = "partial"
+            query_set.failure_code = "research_quota_exhausted"
+            query_set.error = "Monthly research quota reached before the first question could run."
+            query_set.completed_at = _now()
+            await db.commit()
+            return {"status": "partial", "query_set_id": query_set.id}
     query_set.status = "running"
     query_set.phase = "researching"
     job.progress = 10
@@ -404,7 +463,7 @@ async def _maybe_create_adaptive_version(
     rows: list[AiVisibilityQuestion],
     runs: dict[str, AiVisibilityRun],
 ) -> AiVisibilityQuerySet | None:
-    if query_set.version >= MAX_ADAPTIVE_VERSIONS:
+    if query_set.adaptive_depth >= MAX_ADAPTIVE_VERSIONS:
         return None
     candidates = _adaptive_candidates(query_set, rows, runs)
     if not candidates:
@@ -417,6 +476,7 @@ async def _maybe_create_adaptive_version(
         tenant_id=query_set.tenant_id,
         channel_id=query_set.channel_id,
         version=query_set.version + 1,
+        adaptive_depth=query_set.adaptive_depth + 1,
         parent_query_set_id=query_set.id,
         status="generating",
         phase="adaptive",
@@ -442,7 +502,7 @@ async def _maybe_create_adaptive_version(
         subject_id=followup.id,
         lane_key=f"ai-visibility-query-set:{followup.channel_id}",
     )
-    job.ui_title = "Adapting customer research"
+    job.ui_title = "Follow-up research"
     job.ui_kind = "ai_visibility"
     job.ui_visible = True
     job.progress = 0
@@ -460,7 +520,19 @@ async def _finalize_one(db: AsyncSession, query_set_id: str) -> bool:
             .with_for_update(skip_locked=True)
         )
     ).scalar_one_or_none()
-    if query_set is None or query_set.status != "running":
+    if query_set is None:
+        return False
+    if query_set.status == "generating":
+        parent = await db.get(Job, query_set.job_id) if query_set.job_id else None
+        if parent is None or parent.status in TERMINAL_JOB_STATUSES:
+            query_set.status = "failed"
+            query_set.failure_code = "generation_job_failed"
+            query_set.error = "The question-generation job stopped before research could start."
+            query_set.completed_at = _now()
+            await db.commit()
+            return True
+        return False
+    if query_set.status != "running":
         return False
     rows = list(
         (
@@ -559,7 +631,7 @@ async def finalize_due_query_sets(db: AsyncSession, *, limit: int = 20) -> int:
         (
             await db.execute(
                 select(AiVisibilityQuerySet.id)
-                .where(AiVisibilityQuerySet.status == "running")
+                .where(AiVisibilityQuerySet.status.in_(("generating", "running")))
                 .order_by(AiVisibilityQuerySet.updated_at)
                 .limit(max(1, min(limit, 100)))
             )

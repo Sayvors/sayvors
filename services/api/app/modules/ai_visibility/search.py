@@ -12,6 +12,7 @@ from xml.etree import ElementTree
 
 from ...core.pinned_http import UnsafeUrlError, assert_public_http_url, fetch_pinned_bytes
 from ..auth.rate_limit import rate_limit
+from ..memory.service import scrub_pii
 from ..redis.service import cache_get, cache_set
 
 SEARCH_CACHE_SECONDS = 6 * 60 * 60
@@ -142,6 +143,7 @@ def build_query(prompt: str, branch: dict) -> str:
     return generic YouTube/help pages. A named entity plus locality produces
     pages about the business instead.
     """
+    prompt = scrub_pii(prompt)
     name = " ".join(str(branch.get("name") or "").split())
     locality = " ".join(
         str(branch.get("address") or branch.get("locality") or "").split()

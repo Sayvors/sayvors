@@ -70,7 +70,9 @@ class GeneratedQuestion:
 
 
 def _normalize(value: str) -> str:
-    return " ".join(value.casefold().split())
+    normalized = normalize_text(value)
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    return " ".join(normalized.split())
 
 
 def _customer_intent(text: str) -> str:
@@ -95,6 +97,14 @@ def _is_unoffered(text: str, not_offered: str) -> bool:
     question_tokens = set(re.findall(r"\w{3,}", normalize_text(text)))
     for phrase in re.split(r"[,;،؛]|\band\b|\n", not_offered.casefold()):
         tokens = set(re.findall(r"\w{3,}", normalize_text(phrase)))
+        if len(tokens) == 1:
+            token = next(iter(tokens))
+            if any(
+                question == token
+                or (len(token) >= 4 and (question.startswith(token) or token.startswith(question)))
+                for question in question_tokens
+            ):
+                return True
         if len(tokens) >= 2 and len(tokens & question_tokens) >= 2:
             return True
     return False
@@ -173,6 +183,12 @@ def _geography(profile: dict) -> str:
 
 
 def _preferred_languages(profile: dict) -> tuple[str, ...]:
+    audience = str(profile.get("audience_languages") or "").casefold()
+    if any(
+        token in audience
+        for token in ("arabic", "عربي", "العربية")
+    ):
+        return ("ar", "en")
     text = " ".join(
         str(profile.get(key) or "")
         for key in ("address", "locality", "service_area", "description", "services")
@@ -225,7 +241,7 @@ def generate_questions(
 ) -> list[GeneratedQuestion]:
     """Generate customer questions unique to this branch and its services."""
     match = classify_industry(profile)
-    intents = select_intents(match)
+    intents = select_intents(match, str(profile.get("not_offered") or ""))
     languages = _preferred_languages(profile)
     geography = _geography(profile)
     out: list[GeneratedQuestion] = []

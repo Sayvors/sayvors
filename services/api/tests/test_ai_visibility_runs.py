@@ -1,5 +1,6 @@
 """Durable, idempotent AI-visibility run creation."""
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -8,6 +9,8 @@ from app.modules.ai_visibility import router, service
 from app.modules.ai_visibility.models import (
     AiVisibilityAttempt,
     AiVisibilityPrompt,
+    AiVisibilityQuerySet,
+    AiVisibilityQuestion,
     AiVisibilityRun,
 )
 from app.modules.billing.entitlements import EntitlementDenied
@@ -108,6 +111,101 @@ async def test_clear_history_removes_terminal_runs_only(
             select(AiVisibilityRun).where(AiVisibilityRun.id == active.id)
         )
     ).scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
+async def test_query_set_linked_runs_cannot_be_erased_from_history(
+    client, db, user_id, channel_id
+):
+    prompt = await _prompt(db, user_id, channel_id)
+    query_set = AiVisibilityQuerySet(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        version=1,
+        status="completed",
+        depth="quick",
+    )
+    db.add(query_set)
+    await db.flush()
+    question = AiVisibilityQuestion(
+        query_set_id=query_set.id,
+        tenant_id=user_id,
+        channel_id=channel_id,
+        question_key="q001",
+        question_text=prompt.prompt_text,
+        normalized_question_hash=prompt.normalized_prompt_hash,
+        language="en",
+        customer_intent="discovery",
+        industry_relevance=90,
+        service_relevance=95,
+        business_relevance_score=92,
+        research_priority="P1",
+        prompt_id=prompt.id,
+        status="completed",
+        position=0,
+    )
+    db.add(question)
+    await db.flush()
+    linked = AiVisibilityRun(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        prompt_id=prompt.id,
+        query_set_id=query_set.id,
+        question_id=question.id,
+        prompt_snapshot=prompt.prompt_text,
+        status="completed",
+        completed_at=datetime.now(timezone.utc),
+    )
+    legacy = AiVisibilityRun(
+        tenant_id=user_id,
+        channel_id=channel_id,
+        prompt_id=prompt.id,
+        prompt_snapshot=prompt.prompt_text,
+        status="failed",
+        completed_at=datetime.now(timezone.utc),
+    )
+    db.add_all([linked, legacy])
+    await db.commit()
+
+    assert client.delete(f"/api/v1/ai-visibility/runs/{linked.id}").status_code == 409
+    assert client.delete(f"/api/v1/ai-visibility/runs?channel_id={channel_id}").status_code == 204
+    await db.rollback()
+    assert (
+        await db.execute(select(AiVisibilityRun).where(AiVisibilityRun.id == linked.id))
+    ).scalar_one_or_none() is not None
+    assert (
+        await db.execute(select(AiVisibilityRun).where(AiVisibilityRun.id == legacy.id))
+    ).scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_retry_uses_atomic_monthly_quota_guard(
+    db, user_id, channel_id, monkeypatch
+):
+    prompt = await _prompt(db, user_id, channel_id)
+    db.add(
+        AiVisibilityRun(
+            tenant_id=user_id,
+            channel_id=channel_id,
+            prompt_id=prompt.id,
+            prompt_snapshot=prompt.prompt_text,
+            status="failed",
+            completed_at=datetime.now(timezone.utc),
+        )
+    )
+    await db.commit()
+
+    async def _entitlements(_tenant_id, _db):
+        return SimpleNamespace(max_quick_research_month=1, max_deep_research_month=None)
+
+    monkeypatch.setattr(service, "get_entitlements", _entitlements)
+    run_id = (
+        await db.execute(
+            select(AiVisibilityRun.id).where(AiVisibilityRun.prompt_id == prompt.id)
+        )
+    ).scalar_one()
+    with pytest.raises(service.ResearchQuotaExceeded):
+        await service.retry_run(db, user_id, run_id, locale="en")
 
 
 @pytest.mark.asyncio

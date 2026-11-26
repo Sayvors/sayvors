@@ -87,16 +87,30 @@ Perplexity answers and must never be presented as one.
 - Real customer questions are prioritized only when they match the branch name,
   locality, an actual service/product phrase, or a relevant intent. Generic
   support chatter is excluded and cannot return through adaptive versions.
+  Review asks and conversation questions are scrubbed for emails, phones,
+  addresses, long identifiers, and the known reviewer name before use.
 - The public-context collector uses the same SSRF-safe source fetcher. Website
   and public-page excerpts are untrusted data, bounded, and stored as a
   reproducible query-set snapshot. Reviewer names, raw review text, contact
   identifiers, and other customer PII are not sent to question generation.
+- The outbound research prompt serializes an allowlist of merchant/public
+  business fields only. Customer questions, review themes, public context, and
+  provenance fields are excluded; the research question is scrubbed again at
+  the LLM and search boundaries.
 - Query-set versions are immutable. Adaptive versions may add grounded
   competitor comparisons or unused real customer questions, but never rewrite
-  an earlier version or its outcomes. At most two adaptive versions are created.
+  an earlier version or its outcomes. Adaptive depth is tracked separately from
+  the branch-wide version number, with at most two adaptive follow-ups per cycle.
+- Query-set-linked runs cannot be deleted through the legacy single-run or
+  clear-history APIs. Retention is the only eventual cleanup path.
+- Partial/failed sets with pending questions resume into a new linked version
+  that carries the original prompt and `carried_from_question_id`; the partial
+  parent remains unchanged.
 - `ai_visibility.query_set` is internal-only. The generic job API cannot submit,
   inspect, or cancel it. A partial unique index permits one active set per
-  tenant/branch.
+  tenant/branch. The global UI-jobs endpoint resolves each AI Visibility job's
+  channel and applies `analytics.view` plus channel-level RBAC; UI titles are
+  static and never contain raw questions or branch names.
 
 ## Grounding guarantees
 
@@ -147,6 +161,8 @@ Perplexity answers and must never be presented as one.
   metadata is never mistaken for serialization.
 - The finalizer reconciles terminal child jobs with still-active runs, updates
   aggregate counters, and stops cleanly as `partial` when quota is exhausted.
+  Generating sets whose parent job is terminal are failed explicitly; handler
+  re-entry never starts a second child while one is active.
 - Background child-run creation takes a PostgreSQL transaction advisory lock
   keyed by tenant/depth/month, re-counts usage, and inserts atomically. Router
   preflight remains a fast fail, not the concurrency control.

@@ -144,6 +144,7 @@ class QuerySetOut(BaseModel):
     id: str
     channel_id: str
     version: int
+    adaptive_depth: int
     parent_query_set_id: str | None
     status: str
     phase: str | None

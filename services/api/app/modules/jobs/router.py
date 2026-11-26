@@ -4,10 +4,18 @@ Client-facing endpoints use /api/v1/jobs. Admin endpoints use
 /api/v1/admin/jobs.
 """
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.deps import get_current_user, get_db, require_admin
-from ..team.context import TenantContext, require_perm, tenant_id_of
+from ..ai_visibility.models import AiVisibilityQuerySet, AiVisibilityRun
+from ..team.context import (
+    CHANNEL_LEVEL_NONE,
+    TenantContext,
+    get_context,
+    require_perm,
+    tenant_id_of,
+)
 from . import service
 from .models import Job
 
@@ -106,19 +114,73 @@ async def submit_job_endpoint(
     return {"job_id": job.id, "status": job.status, "lane": job.lane}
 
 
+async def _visible_ui_jobs(
+    ctx: TenantContext, jobs: list[Job], db: AsyncSession
+) -> list[Job]:
+    """Apply channel RBAC to AI Visibility jobs in the global progress panel."""
+    query_set_ids = {
+        str((job.payload or {}).get("query_set_id"))
+        for job in jobs
+        if job.job_type == "ai_visibility.query_set" and (job.payload or {}).get("query_set_id")
+    }
+    run_ids = {
+        str((job.payload or {}).get("run_id"))
+        for job in jobs
+        if job.job_type == "ai_visibility.research" and (job.payload or {}).get("run_id")
+    }
+    query_channels = {
+        row.id: row.channel_id
+        for row in (
+            await db.execute(
+                select(AiVisibilityQuerySet).where(
+                    AiVisibilityQuerySet.tenant_id == ctx.tenant_id,
+                    AiVisibilityQuerySet.id.in_(query_set_ids),
+                )
+            )
+        ).scalars()
+    } if query_set_ids else {}
+    run_channels = {
+        row.id: row.channel_id
+        for row in (
+            await db.execute(
+                select(AiVisibilityRun).where(
+                    AiVisibilityRun.tenant_id == ctx.tenant_id,
+                    AiVisibilityRun.id.in_(run_ids),
+                )
+            )
+        ).scalars()
+    } if run_ids else {}
+    visible: list[Job] = []
+    for job in jobs:
+        if job.job_type not in {"ai_visibility.query_set", "ai_visibility.research"}:
+            visible.append(job)
+            continue
+        if not ctx.has("analytics.view"):
+            continue
+        payload = job.payload or {}
+        channel_id = (
+            query_channels.get(str(payload.get("query_set_id")))
+            if job.job_type == "ai_visibility.query_set"
+            else run_channels.get(str(payload.get("run_id")))
+        )
+        if channel_id and ctx.channel_level(channel_id) != CHANNEL_LEVEL_NONE:
+            visible.append(job)
+    return visible
+
+
 @router.get("/jobs/active-ui")
 async def list_active_ui_jobs_endpoint(
     response: Response,
     limit: int = Query(20, ge=1, le=20),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
-    user=Depends(get_current_user),
+    ctx: TenantContext = Depends(get_context),
     db: AsyncSession = Depends(get_db),
 ):
     """Tenant-scoped in-flight UI jobs for the background progress panel."""
     import hashlib, json as _json
 
-    tenant_id = tenant_id_of(user)
-    jobs = await service.list_active_ui_jobs(db, tenant_id=tenant_id, limit=limit)
+    jobs = await service.list_active_ui_jobs(db, tenant_id=ctx.tenant_id, limit=limit)
+    jobs = await _visible_ui_jobs(ctx, jobs, db)
     payload = [_job_to_dict(j) for j in jobs]
     etag_src = _json.dumps(
         [(j["id"], j["status"], j["progress"], j["updated_at"]) for j in payload],

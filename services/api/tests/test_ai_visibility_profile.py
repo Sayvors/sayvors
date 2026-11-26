@@ -237,7 +237,8 @@ async def test_load_branch_facts_adds_workspace_services_products_and_customer_v
             message_count=10,
             insights={
                 "top_questions": [{"question": "Are you licensed in Makkah?", "count": 3}],
-                "topics": ["recruitment"],
+                "topics": [{"topic": "recruitment"}],
+                "intents": [{"intent": "hiring"}],
             },
         )
     )
@@ -252,10 +253,63 @@ async def test_load_branch_facts_adds_workspace_services_products_and_customer_v
     assert "fast service" in facts["review_themes"]
     assert "Are you licensed in Makkah?" in facts["customer_questions"]
     assert "Do you handle domestic workers?" in facts["customer_questions"]
+    assert "recruitment" in facts["review_themes"]
+    assert facts["customer_intents"] == ["hiring"]
     assert "Real estate" in facts["not_offered"]
     serialized = str(facts)
     assert "Private Person" not in serialized
     assert "Private review text" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_customer_voice_scrubs_pii_and_known_reviewer_name(db, user_id, channel_id):
+    from datetime import date
+
+    db.add(
+        ReviewInsight(
+            user_id=user_id,
+            channel_id=channel_id,
+            review_id="review-pii",
+            reviewer_name="Jane Doe",
+            rating=5,
+            enrichment_status="done",
+            meaning={
+                "asks": [
+                    "Can JANE DOE email jane.doe@example.com or call "
+                    "+966 50 123 4567 about order 123456789?"
+                ]
+            },
+        )
+    )
+    db.add(
+        ConversationInsight(
+            tenant_id=user_id,
+            window_start=date(2026, 11, 1),
+            window_end=date(2026, 11, 26),
+            message_count=10,
+            insights={
+                "top_questions": [
+                    {"question": "Can sam.lee@example.com call +966 55 987 6543?"}
+                ]
+            },
+        )
+    )
+    await db.commit()
+
+    facts = await profile_module.load_branch_facts(db, user_id, channel_id)
+
+    assert facts["customer_questions"] == [
+        "Can [customer] email [email] or call [phone] about order [phone]?",
+        "Can [email] call [phone]?",
+    ]
+    serialized = str(facts)
+    assert "Jane Doe" not in serialized
+    assert "JANE DOE" not in serialized
+    assert "jane.doe@example.com" not in serialized
+    assert "sam.lee@example.com" not in serialized
+    assert "+966 50 123 4567" not in serialized
+    assert "+966 55 987 6543" not in serialized
+    assert "123456789" not in serialized
 
 
 @pytest.mark.asyncio
