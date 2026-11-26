@@ -26,6 +26,28 @@ LLM_OUTCOME_UNKNOWN_FAILURE_CODE = "llm_outcome_unknown"
 # Search and fetch are bounded to about a minute; allow enough lease for a
 # slow provider response without letting an abandoned run block its prompt.
 RESEARCH_LEASE_SECONDS = 15 * 60
+USER_ERROR_MESSAGES = {
+    "invalid_research_json": "The research model returned an unreadable brief. Please retry.",
+    "no_llm_model_configured": "No research model is configured. Contact your workspace admin.",
+    "search_unavailable": "Public web search is unavailable. Please retry shortly.",
+    "search_blocked": "Public web search is temporarily paused. Please retry later.",
+    "tenant_search_rate_limited": "This workspace reached its research limit. Wait a minute and retry.",
+    "search_rate_limited": "Public web search is busy. Please retry shortly.",
+    "uncited_answer_sentence": "The brief needs clearer citations. Please retry.",
+    "unfetched_answer_url": "The brief included an unsupported link. Please retry.",
+    "ungrounded_answer_sentence": "The brief could not be verified against its sources. Please retry.",
+    "fabricated_answer_citation": "The brief included an unsupported citation. Please retry.",
+}
+
+
+def _client_error(exc: Exception) -> str:
+    code = str(exc)
+    return USER_ERROR_MESSAGES.get(
+        code,
+        USER_ERROR_MESSAGES.get(
+            type(exc).__name__, "Research could not be completed. Please retry."
+        ),
+    )
 
 
 class RunCancelled(RuntimeError):
@@ -135,6 +157,7 @@ async def _set_terminal(
     run_id: str,
     tenant_id: str,
     *,
+    job,
     status: str,
     failure_code: str,
     error: str,
@@ -150,6 +173,9 @@ async def _set_terminal(
         )
     ).scalar_one_or_none()
     if run is None:
+        # The runner still owns this ORM object after the handler returns.
+        # Rollback expired it, so reload before handing control back.
+        await db.refresh(job)
         return None
     run.status = status
     run.failure_code = failure_code
@@ -157,6 +183,7 @@ async def _set_terminal(
     run.updated_at = _now()
     run.completed_at = _now()
     await db.commit()
+    await db.refresh(job)
     return run
 
 
@@ -226,6 +253,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
                 db,
                 run_id,
                 tenant_id,
+                job=job,
                 status="ambiguous",
                 failure_code=LLM_OUTCOME_UNKNOWN_FAILURE_CODE,
                 error=(
@@ -260,6 +288,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
                 db,
                 run_id,
                 tenant_id,
+                job=job,
                 status="insufficient_evidence",
                 failure_code="insufficient_sources",
                 error="Not enough usable public sources were found for this question.",
@@ -349,6 +378,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
             db,
             run_id,
             tenant_id,
+            job=job,
             status="failed",
             failure_code="budget_exhausted",
             error="AI credits are exhausted.",
@@ -376,9 +406,10 @@ async def handle_research(job, db: AsyncSession) -> dict:
             db,
             run_id,
             tenant_id,
+            job=job,
             status="failed",
             failure_code=type(exc).__name__,
-            error=str(exc)[:2000],
+            error=_client_error(exc),
         )
     except (
         search.SearchUnavailable,
@@ -397,9 +428,10 @@ async def handle_research(job, db: AsyncSession) -> dict:
             db,
             run_id,
             tenant_id,
+            job=job,
             status="failed",
             failure_code=type(exc).__name__,
-            error=str(exc)[:2000],
+            error=_client_error(exc),
         )
     except Exception as exc:
         if llm_attempted:
@@ -427,6 +459,7 @@ async def handle_research(job, db: AsyncSession) -> dict:
             db,
             run_id,
             tenant_id,
+            job=job,
             status=status,
             failure_code=failure_code,
             error=error,

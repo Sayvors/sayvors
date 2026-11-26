@@ -427,6 +427,7 @@ async def test_tenant_search_rate_limit_is_terminal(
     await db.refresh(run)
     assert result["status"] == "failed"
     assert run.failure_code == "TenantSearchRateLimited"
+    assert job.status == "running"
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,7 @@ MAX_COMPETITOR_MENTIONS = 10
 MAX_SUGGESTED_ACTIONS = 10
 MAX_TOTAL_SOURCE_CHARS = 60_000
 RESEARCH_TEMPERATURE = 0.2
-RESEARCH_MAX_TOKENS = 4000
+RESEARCH_MAX_TOKENS = 6000
 RESEARCH_PURPOSE = "ai_visibility_research"
 
 
@@ -112,14 +112,26 @@ def build_messages(
     ]
 
 
+def _decode_json_object(content: str) -> dict:
+    """Accept a bare JSON object or one wrapped in model prose/fences."""
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.I)
+    try:
+        return json.loads(cleaned)
+    except (TypeError, ValueError):
+        start = cleaned.find("{")
+        if start < 0:
+            raise
+        # raw_decode ignores trailing commentary after the object.
+        return json.JSONDecoder().raw_decode(cleaned[start:])[0]
+
+
 def parse_response(content: str, sources: list[dict]) -> ResearchPayload:
     """Decode model JSON and enforce the research schema before use.
 
     Source membership is checked against immutable snapshots by ``validation``.
     """
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.I)
     try:
-        return ResearchPayload.model_validate(json.loads(cleaned))
+        return ResearchPayload.model_validate(_decode_json_object(content))
     except (TypeError, ValueError) as exc:
         raise ResearchValidationError("invalid_research_json") from exc
 
