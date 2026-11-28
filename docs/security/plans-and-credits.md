@@ -91,8 +91,8 @@ gate. Reads require `analytics.view`, and writes require `ai.edit` plus effectiv
   wallet and usage ledger.
 - Public web search has no paid provider key. Redis provides query caching,
   tenant/global rate limits, and provider-block cooldowns.
-- Create and retry share a durable per-prompt policy: three accepted attempts
-  in the trailing hour and a 60-second cooldown. An append-only attempt ledger
+- Create and retry share a durable per-prompt policy: 20 accepted attempts
+  in the trailing hour and a 5-second cooldown. An append-only attempt ledger
   survives run deletion; prompt text is locked after research begins, and
   prompt deletion archives rather than erases the policy identity.
 - AI Visibility jobs are internal-only; the generic client job API is not an
@@ -164,11 +164,16 @@ balance. A DB failure returns `503` and the provider call is not made.
 
 There are two operator paths:
 
-- `POST /api/v1/admin/tenants/{id}/plan` — legacy grant that sets
-  `users.plan`, writes the wallet/ledger and syncs Redis. It now also updates
-  the subscription so entitlements and the wallet agree.
-- `POST /api/v1/admin/tenants/{id}/grant-plan` — changes the subscription row
-  only. It is intended for support overrides and does not move credit.
+- `POST /api/v1/admin/tenants/{id}/plan` — legacy `free`/`pro` grant that sets
+  `users.plan`, writes the wallet/ledger and syncs Redis. It also updates the
+  subscription so entitlements and the wallet agree.
+- `POST /api/v1/admin/tenants/{id}/grant-plan` — full-catalog plan switch used
+  by the admin console and plan-request approvals. It locks the user and
+  subscription, updates `users.plan`, and grants the target plan's
+  `included_credit_cents` exactly once when the plan actually changes. The
+  wallet and a `plan_grant` ledger row move in the same transaction; Redis is
+  synced only after commit. A client-generated `idempotency_key` makes retries
+  harmless, and reapplying the same plan never grants the included credit again.
 
 Both require an admin session (`require_admin`), are rate-limited, and are
 recorded in the admin audit middleware. A customer cannot call either route.
@@ -187,11 +192,12 @@ tenant's **Billing · AI credit ledger** section in the admin console.
 
 ### Tenant lifecycle controls
 
-The console can grant a plan and add manual AI credit. It does **not** yet
-have a tenant-level suspend/disable switch, a promotion-code system, or a
-tenant purge. `TenantSubscription.status = canceled` changes billing state; it
-does not block login. The customer deletion route is a 30-day personal-data
-anonymization that retains business records, not a tenant purge.
+The console can grant a plan and add manual AI credit. Tenant suspend,
+reactivate, export-before-purge and permanent purge controls are implemented
+and documented in [`tenant-lifecycle.md`](tenant-lifecycle.md). It does not yet
+have a promotion-code system. `TenantSubscription.status = canceled` changes
+billing state; it does not block login. The customer deletion route is a 30-day
+personal-data anonymization that retains business records, not a tenant purge.
 
 Planned controls and their required safety properties are tracked as AT-1 to
 AT-6 in `readiness-report.html#admin-tenant-controls`.
@@ -218,8 +224,8 @@ payment provider and webhook exist. Enterprise opens an email to
 1. Real payment checkout and webhook are not implemented.
 2. Trial expiry is not enforced; the trial remains until an operator changes
    the plan, matching the current product decision.
-3. The legacy grant endpoint accepts only `free` and `pro`; a full catalog
-   grant should use plan slugs and the plan's `included_credit_cents`.
+3. The legacy grant endpoint accepts only `free` and `pro`; full-catalog plan
+   changes use `grant-plan` and the plan's `included_credit_cents`.
 4. WABA/Meta conversation cost attribution is not tracked per tenant.
 5. `features_override` changes are audited by the admin middleware, but there
    is no dedicated per-feature change history table.

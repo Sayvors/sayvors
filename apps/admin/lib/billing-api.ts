@@ -198,6 +198,9 @@ export interface TenantSubscriptionRow {
   granted_by: string | null;
   granted_until: string | null;
   features_override: Record<string, boolean>;
+  granted_credit_cents?: number;
+  balance_cents?: number | null;
+  duplicate?: boolean;
 }
 
 export async function fetchTenantEntitlements(tenantId: string): Promise<TenantEntitlements> {
@@ -232,12 +235,13 @@ export async function saveTenantFeatures(
 export async function changeTenantPlan(
   tenantId: string,
   planSlug: string,
+  idempotencyKey: string,
 ): Promise<TenantSubscriptionRow> {
   return adminFetch<TenantSubscriptionRow>(
     `/api/v1/admin/tenants/${encodeURIComponent(tenantId)}/grant-plan`,
     {
       method: "POST",
-      body: JSON.stringify({ plan_slug: planSlug }),
+      body: JSON.stringify({ plan_slug: planSlug, idempotency_key: idempotencyKey }),
     },
   );
 }

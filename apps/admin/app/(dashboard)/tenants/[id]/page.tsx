@@ -180,6 +180,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   const [planSlugDraft, setPlanSlugDraft] = useState("");
   const [switching, setSwitching] = useState(false);
   const [switchMsg, setSwitchMsg] = useState<string | null>(null);
+  const planSwitchKeyRef = useRef("");
 
   useEffect(() => {
     let cancelled = false;
@@ -259,23 +260,35 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
     return () => { cancelled = true; };
   }, [id]);
 
-  const reloadBilling = useCallback(() => {
+  const reloadBilling = useCallback(async () => {
     setBillingLoading(true);
     setBillingError(null);
-    fetchTenantBilling(id)
-      .then((b) => { setBilling(b); })
-      .catch((e) => { setBillingError(e instanceof Error ? e.message : "Billing load failed."); })
-      .finally(() => setBillingLoading(false));
+    try {
+      const next = await fetchTenantBilling(id);
+      setBilling(next);
+      return next;
+    } catch (e) {
+      setBillingError(e instanceof Error ? e.message : "Billing load failed.");
+      return null;
+    } finally {
+      setBillingLoading(false);
+    }
   }, [id]);
 
   // Plan + per-tenant overrides for this tenant.
-  const loadEntitlements = useCallback(() => {
+  const loadEntitlements = useCallback(async () => {
     setEntLoading(true);
     setEntError(null);
-    fetchTenantEntitlements(id)
-      .then((e) => { setEnt(e); })
-      .catch((e) => { setEntError(e instanceof Error ? e.message : "Plan load failed."); })
-      .finally(() => setEntLoading(false));
+    try {
+      const next = await fetchTenantEntitlements(id);
+      setEnt(next);
+      return next;
+    } catch (e) {
+      setEntError(e instanceof Error ? e.message : "Plan load failed.");
+      return null;
+    } finally {
+      setEntLoading(false);
+    }
   }, [id]);
 
   useEffect(() => {
@@ -327,21 +340,46 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
 
   const applyPlanSwitch = useCallback(async () => {
     if (!planSlugDraft || planSlugDraft === ent?.plan_slug) return;
+    const target = planPlans.find((plan) => plan.slug === planSlugDraft);
+    if (!target) return;
+    const credit = Math.max(0, target.included_credit_cents ?? 0);
+    const confirmation = credit > 0
+      ? `Switch to ${target.name} and add ${fmtCents(credit)} AI credit?`
+      : `Switch this tenant to ${target.name}?`;
+    if (!window.confirm(confirmation)) return;
     setSwitching(true);
     setSaveError(null);
     setSwitchMsg(null);
+    if (!planSwitchKeyRef.current) {
+      planSwitchKeyRef.current = typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `plan-switch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
     try {
-      await changeTenantPlan(id, planSlugDraft);
-      const fresh = await fetchTenantEntitlements(id);
-      setEnt(fresh);
-      setPlanSlugDraft(fresh.plan_slug);
-      setSwitchMsg(`Switched to ${fresh.plan_name}. Feature baseline below reflects the new plan.`);
+      const result = await changeTenantPlan(id, planSlugDraft, planSwitchKeyRef.current);
+      const [fresh, wallet] = await Promise.all([loadEntitlements(), reloadBilling()]);
+      const planSlug = fresh?.plan_slug ?? result.plan_slug ?? planSlugDraft;
+      const planName = fresh?.plan_name ?? result.plan_name ?? target.name;
+      const granted = Math.max(0, result.granted_credit_cents ?? 0);
+      const balance = wallet?.balance_cents ?? result.balance_cents ?? null;
+      setPlanSlugDraft(planSlug);
+      setSwitchMsg(result.duplicate
+        ? "This plan switch was already applied; no second credit grant was made."
+        : granted > 0
+          ? `Switched to ${planName}. ${fmtCents(granted)} credit added${balance !== null ? `; new balance ${fmtCents(balance)}` : ""}.`
+          : `Switched to ${planName}. Feature baseline below reflects the new plan.`);
+      setTenant((prev) => prev ? {
+        ...prev,
+        plan: planSlug,
+        ai_credit_cents: balance ?? prev.ai_credit_cents,
+      } : prev);
+      planSwitchKeyRef.current = "";
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Plan switch failed.");
     } finally {
       setSwitching(false);
     }
-  }, [id, planSlugDraft, ent]);
+  }, [id, planSlugDraft, ent, planPlans, loadEntitlements, reloadBilling]);
 
   /**
    * A key is only stored when it differs from the plan baseline. An override
@@ -552,6 +590,7 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
   const name = [tenant.first_name, tenant.last_name].filter(Boolean).join(" ");
   const displayName = name || tenant.email.split("@")[0];
   const maxModelTokens = Math.max(1, ...(usage?.by_model.map((m) => m.total_tokens) ?? [1]));
+  const targetPlan = planPlans.find((plan) => plan.slug === planSlugDraft);
 
   const stage: 1 | 2 | 3 = tenant.has_connection ? 3 : tenant.email_verified ? 2 : 1;
   const stageLabel = stage === 3 ? "Active" : stage === 2 ? "Verified · unconnected" : "Signed up · unverified";
@@ -1591,14 +1630,19 @@ export default function AdminTenantDetailPage({ params }: { params: Promise<{ id
               <div className="mb-5 rounded-[2px] border border-[var(--ui-line-strong)] p-4">
                 <p className="text-[12px] font-bold text-ink">Switch plan</p>
                 <p className="mt-0.5 text-[11px] leading-relaxed text-ink/50">
-                  Change this tenant's plan directly (same action as approving a plan request).
+                  Change this tenant&apos;s plan directly (same action as approving a plan request).
                   Current: <span className="font-semibold text-ink/70">{ent.plan_name}</span>.
+                  {targetPlan && targetPlan.included_credit_cents > 0 && (
+                    <span className="mt-1 block font-semibold text-deep-violet">
+                      Included credit on plan change: {fmtCents(targetPlan.included_credit_cents)}
+                    </span>
+                  )}
                 </p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                   <select
                     aria-label="Target plan"
                     value={planSlugDraft}
-                    onChange={(e) => { setPlanSlugDraft(e.target.value); setSwitchMsg(null); }}
+                    onChange={(e) => { setPlanSlugDraft(e.target.value); setSwitchMsg(null); planSwitchKeyRef.current = ""; }}
                     className="h-9 rounded-[2px] border border-[var(--ui-line)] bg-white px-2.5 text-[12px] text-ink outline-none focus:border-deep-violet"
                   >
                     <option value="" disabled>Select plan…</option>

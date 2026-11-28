@@ -127,6 +127,9 @@ export default function AdminRequestsPage() {
   );
 
   async function decide(request: AdminBillingRequest, approve: boolean) {
+    if (approve && request.kind === "plan" && !window.confirm(
+      "Approve this plan request? The plan's included AI credit will be granted once when the plan changes.",
+    )) return;
     setBusy(request.id);
     setError(null);
     setNotice(null);

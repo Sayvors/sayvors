@@ -168,12 +168,16 @@ class SubscriptionOut(BaseModel):
     granted_by: str | None = None
     granted_until: datetime | None = None
     features_override: dict = Field(default_factory=dict)
+    granted_credit_cents: int = 0
+    balance_cents: int | None = None
+    duplicate: bool = False
 
 
 class GrantPlanIn(BaseModel):
     plan_slug: str = Field(..., min_length=1, max_length=40)
     granted_until: datetime | None = None
     note: str | None = Field(default=None, max_length=500)
+    idempotency_key: str | None = Field(default=None, max_length=160)
 
 
 class TenantFeaturesIn(BaseModel):

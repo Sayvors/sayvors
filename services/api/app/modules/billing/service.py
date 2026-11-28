@@ -457,6 +457,120 @@ async def grant_plan(user_id: str, plan: str, add_credit_cents: int,
     }
 
 
+async def apply_plan_change(
+    user_id: str,
+    plan_slug: str,
+    *,
+    granted_until: datetime | None,
+    note: str | None,
+    created_by: str | None,
+    idempotency_key: str | None,
+    db: AsyncSession,
+) -> dict:
+    """Switch one tenant's plan and grant its included credit atomically.
+
+    The caller owns the transaction commit. The user row is locked before the
+    idempotency check so concurrent retries cannot both grant credit. A plan
+    reapplication without a plan change never grants the included amount again.
+    """
+    from ..users.models import User
+    from .ledger import ensure_ledger_initialized
+
+    slug = (plan_slug or "").strip()
+    if not slug or len(slug) > 16:
+        raise ValueError("Invalid plan identifier.")
+    plan = (
+        await db.execute(
+            select(Plan).where(Plan.slug == slug, Plan.is_active.is_(True))
+        )
+    ).scalar_one_or_none()
+    if plan is None:
+        raise ValueError("Plan not found.")
+
+    user = (
+        await db.execute(select(User).where(User.id == user_id).with_for_update())
+    ).scalar_one_or_none()
+    if user is None:
+        raise ValueError("Tenant not found.")
+
+    key = idempotency_key or f"plan-change:{user_id}:{uuid.uuid4()}"
+    existing = (
+        await db.execute(
+            select(BillingEvent).where(
+                BillingEvent.tenant_id == user_id,
+                BillingEvent.idempotency_key == key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        balance = int(user.ai_credit_cents or 0)
+        return {
+            "plan_slug": user.plan or "free",
+            "plan_name": plan.name,
+            "balance_cents": balance,
+            "balance_dollars": round(balance / 100, 2),
+            "granted_credit_cents": 0,
+            "duplicate": True,
+        }
+
+    sub = (
+        await db.execute(
+            select(TenantSubscription)
+            .where(TenantSubscription.tenant_id == user_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    current_plan = await db.get(Plan, sub.plan_id) if sub is not None else None
+    old_slug = current_plan.slug if current_plan is not None else (user.plan or "free")
+    plan_changed = old_slug != plan.slug
+    included = max(0, int(plan.included_credit_cents or 0)) if plan_changed else 0
+
+    if sub is None:
+        sub = TenantSubscription(
+            tenant_id=user_id,
+            plan_id=plan.id,
+            status="active",
+            granted_by=created_by or "admin",
+            granted_until=granted_until,
+        )
+        db.add(sub)
+    else:
+        sub.plan_id = plan.id
+        sub.status = "active"
+        sub.granted_by = created_by or "admin"
+        sub.granted_until = granted_until
+    user.plan = plan.slug
+
+    balance = int(user.ai_credit_cents or 0)
+    if included > 0:
+        before = int(await ensure_ledger_initialized(user_id, db))
+        balance = before + included
+        user.ai_credit_cents = balance
+        db.add(
+            BillingEvent(
+                id=str(uuid.uuid4()),
+                tenant_id=user_id,
+                kind="plan_grant",
+                status="posted",
+                amount_cents=included,
+                reserved_cents=0,
+                balance_after_cents=balance,
+                idempotency_key=key,
+                note=(note or f"Included credit for {plan.name}")[:500],
+                created_by=(created_by or "admin")[:36],
+            )
+        )
+    await db.flush()
+    return {
+        "plan_slug": plan.slug,
+        "plan_name": plan.name,
+        "balance_cents": balance,
+        "balance_dollars": round(balance / 100, 2),
+        "granted_credit_cents": included,
+        "duplicate": False,
+    }
+
+
 async def grant_credit(
     user_id: str,
     amount_cents: int,

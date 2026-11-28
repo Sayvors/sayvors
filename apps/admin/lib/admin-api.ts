@@ -421,6 +421,8 @@ export interface AdminTenant {
 }
 
 export interface AdminTenantDetail extends AdminTenant {
+  plan?: string;
+  ai_credit_cents?: number;
   recent_reviews: {
     id: string;
     rating: number;
