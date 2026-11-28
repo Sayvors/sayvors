@@ -432,3 +432,26 @@ async def test_store_whatsapp_connection_without_token_cannot_create_row(db):
             db, "tokenless-insert", "whatsapp", {"waba_id": "waba-only"},
         )
     assert (await db.execute(select(func.count()).select_from(MetaConnection))).scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_connect_exchange_preserves_prior_data_access_deadline():
+    from unittest.mock import AsyncMock
+    from app.modules.channels.meta.token_rotation import TokenInfo, prepare_whatsapp_credentials
+
+    adapter = AsyncMock()
+    adapter.inspect_token.return_value = TokenInfo(token_kind="USER", is_valid=True)
+    adapter.exchange_long_lived_token.return_value = {
+        "access_token": "long-user-token", "expires_in": 5184000,
+    }
+    prepared = await prepare_whatsapp_credentials(
+        adapter,
+        {
+            "access_token": "short-user-token",
+            "data_access_expires_at": int((NOW + timedelta(days=1)).timestamp()),
+        },
+        now=NOW,
+    )
+
+    assert prepared["access_token"] == "long-user-token"
+    assert prepared["data_access_expires_at"] == NOW + timedelta(days=1)

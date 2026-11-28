@@ -129,6 +129,25 @@ async def test_successful_rotation_encrypts_token_and_clears_error(db):
     assert conn.status == "active"
 
 
+async def test_worker_exchange_preserves_prior_data_access_deadline(db):
+    conn = await _seed(
+        db, "preserve-data-access", expires_at=NOW + timedelta(days=2),
+        data_access_expires_at=NOW + timedelta(days=1),
+    )
+    adapter = AsyncMock()
+    adapter.exchange_long_lived_token.return_value = {
+        "access_token": "rotated-plaintext", "expires_in": 5184000,
+    }
+
+    assert await run_rotation_pass(
+        session_factory=lambda: _borrowed(db), adapter=adapter, now=NOW, concurrency=1,
+    ) == 1
+    await db.refresh(conn)
+    assert decrypt_credential(conn.access_token_encrypted) == "rotated-plaintext"
+    assert _utc(conn.token_expires_at) == NOW + timedelta(days=60)
+    assert _utc(conn.data_access_expires_at) == NOW + timedelta(days=1)
+
+
 async def test_stale_compare_and_swap_cannot_overwrite_reconnect(db):
     conn = await _seed(db, "stale-cas")
     ciphertext = conn.access_token_encrypted

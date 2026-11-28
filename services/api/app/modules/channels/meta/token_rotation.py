@@ -364,7 +364,11 @@ async def _process_connection(connection_id: str, *, session_factory, adapter,
                 )
                 info = TokenInfo(
                     token_kind="USER", expires_at=rotated.expires_at,
-                    data_access_expires_at=rotated.data_access_expires_at,
+                    data_access_expires_at=(
+                        rotated.data_access_expires_at
+                        or info.data_access_expires_at
+                        or stored.data_access_expires_at
+                    ),
                     is_valid=True, app_id=rotated.app_id, scopes=rotated.scopes,
                     expiry_source=rotated.expiry_source,
                 )
@@ -568,7 +572,11 @@ async def prepare_whatsapp_credentials(adapter, credentials: dict,
             return prepared
         rotated = TokenInfo(
             token_kind="USER", expires_at=rotated.expires_at,
-            data_access_expires_at=rotated.data_access_expires_at,
+            data_access_expires_at=(
+                rotated.data_access_expires_at
+                or info.data_access_expires_at
+                or original.data_access_expires_at
+            ),
             is_valid=True, app_id=rotated.app_id, scopes=rotated.scopes,
             expiry_source=rotated.expiry_source,
         )
