@@ -177,6 +177,8 @@ There are two operator paths:
 
 Both require an admin session (`require_admin`), are rate-limited, and are
 recorded in the admin audit middleware. A customer cannot call either route.
+Plan slugs follow the catalog's 40-character contract; migration
+`20261128100000` widens `users.plan` to match without changing existing values.
 
 ### Admin credit top-up
 

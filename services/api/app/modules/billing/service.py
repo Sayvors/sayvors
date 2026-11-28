@@ -477,7 +477,7 @@ async def apply_plan_change(
     from .ledger import ensure_ledger_initialized
 
     slug = (plan_slug or "").strip()
-    if not slug or len(slug) > 16:
+    if not slug or len(slug) > 40:
         raise ValueError("Invalid plan identifier.")
     plan = (
         await db.execute(
@@ -542,8 +542,12 @@ async def apply_plan_change(
     user.plan = plan.slug
 
     balance = int(user.ai_credit_cents or 0)
-    if included > 0:
-        before = int(await ensure_ledger_initialized(user_id, db))
+    if plan_changed:
+        before = (
+            int(await ensure_ledger_initialized(user_id, db))
+            if included > 0
+            else balance
+        )
         balance = before + included
         user.ai_credit_cents = balance
         db.add(

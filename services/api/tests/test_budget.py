@@ -748,6 +748,80 @@ async def test_admin_enterprise_switch_grants_credit_idempotently(
 
 
 @pytest.mark.asyncio
+async def test_zero_credit_plan_change_records_idempotent_grant(db):
+    from app.modules.billing import service as billing_service
+    from app.modules.billing.models import BillingEvent, Plan
+    from app.modules.users.models import User
+
+    uid = "budget-zero-credit-user-001"
+    db.add(User(id=uid, email="zero@sayvors.com", first_name="Z",
+                last_name="Plan", password_hash="x", onboarded=True))
+    db.add(Plan(
+        id="test-plan-zero-credit",
+        slug="zero-credit",
+        name="Zero Credit",
+        included_credit_cents=0,
+        is_active=True,
+    ))
+    await db.commit()
+
+    first = await billing_service.apply_plan_change(
+        uid, "zero-credit", granted_until=None, note=None, created_by="admin",
+        idempotency_key="zero-credit-switch-1", db=db,
+    )
+    await db.commit()
+    assert first["granted_credit_cents"] == 0
+    assert first["duplicate"] is False
+    assert first["balance_cents"] == 0
+    event = (
+        await db.execute(
+            select(BillingEvent).where(
+                BillingEvent.tenant_id == uid,
+                BillingEvent.idempotency_key == "zero-credit-switch-1",
+            )
+        )
+    ).scalar_one()
+    assert event.kind == "plan_grant"
+    assert event.amount_cents == 0
+
+    retry = await billing_service.apply_plan_change(
+        uid, "zero-credit", granted_until=None, note=None, created_by="admin",
+        idempotency_key="zero-credit-switch-1", db=db,
+    )
+    assert retry["duplicate"] is True
+    assert retry["granted_credit_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_long_catalog_plan_slug_can_be_applied(db):
+    from app.modules.billing import service as billing_service
+    from app.modules.billing.models import Plan
+    from app.modules.users.models import User
+
+    uid = "budget-long-slug-user-0001"
+    slug = "enterprise-emea-2026"
+    db.add(User(id=uid, email="long@sayvors.com", first_name="L",
+                last_name="Plan", password_hash="x", onboarded=True))
+    db.add(Plan(
+        id="test-plan-long-slug",
+        slug=slug,
+        name="Enterprise EMEA",
+        included_credit_cents=100000,
+        is_active=True,
+    ))
+    await db.commit()
+
+    result = await billing_service.apply_plan_change(
+        uid, slug, granted_until=None, note=None, created_by="admin",
+        idempotency_key="long-slug-switch-1", db=db,
+    )
+    await db.commit()
+    assert result["plan_slug"] == slug
+    user = await db.get(User, uid)
+    assert user.plan == slug
+
+
+@pytest.mark.asyncio
 async def test_cache_is_a_mirror_not_the_balance(db):
     """A poisoned cache cannot block a funded wallet; the mirror is repaired."""
     await _seed_live_wallet(db, _TENANT, 100)
