@@ -37,6 +37,7 @@ export const queryKeys = {
   },
   usage: {
     summary: (days: number) => ["usage", "summary", days] as const,
+    whatsapp: (days: number) => ["usage", "whatsapp", days] as const,
   },
   verification: {
     channels: () => ["verification", "channels"] as const,

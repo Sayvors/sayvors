@@ -10,6 +10,7 @@ import { useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api-rag";
 import LogoLoader from "@/components/LogoLoader";
 import MetaConnections from "@/components/channels/MetaConnections";
+import WhatsAppUsageCard from "@/components/channels/WhatsAppUsageCard";
 import PlatformMark from "@/components/channels/PlatformMark";
 import { setActiveConnectImport } from "@/lib/connect-import";
 
@@ -564,6 +565,7 @@ function ConnectHub() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <MetaConnections onNotice={(kind, text) => setBanner({ kind, text })} />
         </div>
+        <WhatsAppUsageCard />
       </section>
 
       {loading && <p className="text-[12px] text-ink/40 dark:text-fog/40">{ch.hub.loading}</p>}
