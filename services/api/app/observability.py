@@ -47,6 +47,12 @@ _SENSITIVE_KEY_RE = re.compile(
 )
 _SCRUBBED = "[redacted]"
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_QUERY_KEY_RE = re.compile(r"(^|[._-])query$", re.IGNORECASE)
+_SENSITIVE_QUERY_RE = re.compile(
+    r"(?:^|[?&\s])(?:client[_-]?secret|fb[_-]?exchange[_-]?token|"
+    r"input[_-]?token|access[_-]?token|token|api[_-]?key)=",
+    re.IGNORECASE,
+)
 
 
 def _strip_url_query(value: str) -> str:
@@ -105,13 +111,21 @@ def _scrub(value: Any, _depth: int = 0) -> Any:
         return _SCRUBBED
     if isinstance(value, dict):
         return {
-            k: (_SCRUBBED if _SENSITIVE_KEY_RE.search(str(k)) else _scrub(v, _depth + 1))
+            k: (
+                _SCRUBBED
+                if _SENSITIVE_KEY_RE.search(str(k)) or _QUERY_KEY_RE.search(str(k))
+                else _scrub(v, _depth + 1)
+            )
             for k, v in value.items()
         }
     if isinstance(value, list):
         return [_scrub(v, _depth + 1) for v in value]
     if isinstance(value, str):
-        return _URL_RE.sub(lambda match: _strip_url_query(match.group(0)), value)
+        cleaned = _URL_RE.sub(lambda match: _strip_url_query(match.group(0)), value)
+        # HTTPX integrations can emit query text without a URL (http.query /
+        # url.query or exception args). Redact the whole value when it carries a
+        # credential parameter rather than trying to preserve untrusted syntax.
+        return _SCRUBBED if _SENSITIVE_QUERY_RE.search(cleaned) else cleaned
     return value
 
 

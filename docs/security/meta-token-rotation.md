@@ -36,9 +36,10 @@ later token expiry cannot silently extend data access.
 OAuth credentials are sent as form fields rather than URL query parameters.
 The Graph caller credential remains a server-generated app access token; tenant
 tokens are never used as caller authentication for `/debug_token`. Sentry and
-GlitchTip error and transaction hooks recursively strip URL query strings before
-transmission, preventing OAuth credentials or tenant tokens from entering
-telemetry even when an HTTP integration captures a request URL.
+GlitchTip error and transaction hooks recursively strip URL query strings and
+redact standalone query fields or credential-bearing query text before
+transmission. A canary with the default HTTPX integration verifies that
+`/debug_token` `input_token` cannot survive in captured telemetry.
 
 ## Durable state and bounded worker
 
