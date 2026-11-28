@@ -1,4 +1,4 @@
-# WhatsApp Token Rotation — Production Design
+# WhatsApp Token Lifecycle — Production Design
 
 Date: 2026-11-28
 Status: Approved for implementation
@@ -6,163 +6,154 @@ Scope: WhatsApp Meta connections only
 
 ## Goal
 
-Rotate supported expiring WhatsApp tokens before expiry, classify non-expiring Business Integration System User tokens as healthy, detect revoked or permanently rejected tokens early, fail closed for new sends, preserve inbound webhooks and history, and alert the tenant and platform operators.
+Classify WhatsApp credentials using Meta's authoritative token metadata, rotate
+only eligible User tokens before expiry, detect revoked or permanently rejected
+tokens early, fail closed for new sends, preserve inbound webhooks and history,
+and alert the tenant and platform operators.
 
-## Current gap
+## Authoritative lifecycle rules
 
-- `MetaConnection.access_token_encrypted` already stores tokens with Fernet encryption.
-- `MetaConnection.token_expires_at` exists but code-exchange responses do not reliably populate it.
-- Tokens are decrypted at each use with no proactive rotation or expiry-health workflow.
-- A token rejected by Meta is discovered during a send and there is no durable rotation audit or reconnect alert.
+Embedded Signup v4 commonly returns Business Integration System User tokens.
+These are intended for server-to-server access without future re-authentication.
+They must not be sent through `fb_exchange_token`.
+
+1. Preserve the complete code-exchange payload in memory through classification.
+2. When token type or expiry is unknown, inspect it with Graph `/debug_token`,
+   authenticated by a server-generated **app access token** (`client_credentials`),
+   never by the inspected business token.
+3. Exchange only tokens Meta identifies as `USER`, using `fb_exchange_token`.
+4. Treat valid `SYSTEM_USER` and `BUSINESS_INTEGRATION_SYSTEM_USER` tokens with no
+   reported expiry as non-expiring. Never invent a 60-day expiry for them.
+5. Preserve both `expires_at` and `data_access_expires_at`; the earlier timestamp
+   is the effective send deadline.
+6. For other expiring token types, validate and alert before expiry. Do not guess
+   at a server-side rotation mechanism.
+7. A 60-day fallback is allowed only when a User-token long-lived exchange omits
+   `expires_in`; record that the expiry is a documented fallback.
+
+Official references:
+
+- <https://developers.facebook.com/documentation/business-messaging/whatsapp/access-tokens>
+- <https://developers.facebook.com/documentation/facebook-login/facebook-login-for-business>
+- <https://developers.facebook.com/docs/graph-api/reference/debug_token>
+- <https://developers.facebook.com/docs/facebook-login/access-tokens>
 
 ## Non-goals
 
 - Facebook and Instagram token rotation.
 - Rotation of the Meta app secret or webhook verification token.
 - Changing phone numbers, message history, assets, or webhook subscriptions.
-- Eliminating reconnection when the merchant revokes permissions or Meta permanently rejects the token.
+- Fixing the separate plaintext Page-token storage issue.
+- Eliminating reconnection when the merchant revokes permissions or Meta
+  permanently rejects the token.
 
-## Architecture
+## Durable state
 
-### 1. Capture and normalize credentials
+`MetaConnection` gains:
 
-The WhatsApp adapter preserves the complete Embedded Signup exchange response, inspects token type/expiry with `/debug_token` using an app access token when needed, and only applies `grant_type=fb_exchange_token` to supported expiring User tokens. Business Integration System User tokens are designed to avoid routine re-authentication; confirmed non-expiring tokens are marked healthy and skipped rather than assigned a fabricated expiry.
+- `token_kind`: bounded Meta token type, or null until inspected.
+- `data_access_expires_at`: Meta's data-access deadline, when reported.
+- `token_last_rotated_at`: last successful User-token long-lived exchange.
+- `token_rotation_attempts`: consecutive failed maintenance attempts.
+- `token_rotation_error`: bounded safe error code, never provider text.
+- `token_rotation_next_attempt_at`: exponential-backoff retry deadline.
+- `token_rotation_lease_until`: short claim lease, never held across HTTP.
 
-- Preserve `expires_in` and `data_access_expires_at` when Meta returns them.
-- Store `token_expires_at` as a UTC timestamp only when expiry is known.
-- If a supported User-token long-lived exchange omits expiry, use a documented 60-day fallback and keep the token eligible for early rotation.
-- Never invent expiry for Business Integration System User or other non-expiring token types.
-- Never log or persist the plaintext token outside the existing encrypted column.
+An index on `(provider, status, token_expires_at)` supports bounded due scans.
+Existing rows remain valid; null classification means "inspect before acting".
 
-### 2. Durable rotation state
-
-Add to `MetaConnection`:
-
-- `token_kind`: coarse safe classification (`USER`, `SYSTEM_USER`, `BUSINESS_INTEGRATION_SYSTEM_USER`, `UNKNOWN`).
-- `data_access_expires_at`: optional Meta-reported data-access expiry.
-- `token_last_rotated_at`: last successful supported rotation.
-- `token_rotation_lease_until`: short worker claim lease; never hold a DB row lock during HTTP.
-- `token_rotation_attempts`: consecutive failed rotation attempts.
-- `token_rotation_error`: bounded safe error code, never raw provider text or token fragments.
-
-Add an index on `(provider, status, token_expires_at)` so the due-token scan does not become a full-table walk at scale.
-
-A single Alembic migration adds the fields and index. Existing rows remain valid; null rotation fields mean "not yet enrolled".
-
-### 3. Scheduled rotation worker
-
-A dedicated worker loop runs every six hours with startup jitter.
-
-Selection rules:
-
-- `provider = whatsapp`.
-- Status is `active` or recoverable `error`.
-- Token exists and is not revoked.
-- Token is within seven days of expiry, has unknown expiry, or has not yet been enrolled in long-lived rotation.
-
-Execution rules:
-
-- Bounded batch of 100 connections per pass.
-- Bounded concurrency of five token inspections/exchanges.
-- Claim a connection with a short lease, release the transaction before the Meta HTTP call, then compare-and-swap the result so concurrent workers cannot double-rotate.
-- Confirmed non-expiring tokens are validated and skipped without a fake expiry or rotation call.
-- On success, encrypt and store the new token when one was issued, update known expiry/kind, clear error state, restore `active`, and reset attempts.
-- On transient transport, 429, or 5xx failures, keep the old token, record a safe error code, apply exponential backoff, and retry in a later pass.
-- On permanent 400/401/403 rejection, mark `needs_reauth`, block new sends, and emit alerts.
-
-The row lock is held only long enough to claim or persist one connection; no global lock, network call under lock, or unbounded fan-out is introduced.
-
-### 4. Connect-time rotation
+## Connect-time classification
 
 After code exchange and before storing a new WhatsApp connection:
 
-1. Attempt the long-lived token exchange immediately.
-2. Store the long-lived token and expiry on success.
-3. If the exchange is transiently unavailable, store the original encrypted token with its known expiry (when available), mark a recoverable rotation error, and let the worker retry without forcing the merchant through onboarding again.
-4. If Meta permanently rejects the token, fail the connect with a safe reconnect message.
+1. Keep all returned fields available to the classifier; encrypt the token into
+   the existing credential column and never persist the plaintext payload.
+2. Inspect unknown type/expiry with `/debug_token` using an app access token.
+3. For a User token, attempt the long-lived exchange immediately. Store its
+   token, reported expiry (or documented User-only fallback), and rotation time.
+4. For a confirmed non-expiring system/business token, store it unchanged with
+   null expiry and healthy status. No exchange and no synthetic expiry.
+5. For another expiring type, store the authoritative deadlines and validate
+   without rotation; alert if it is already inside the seven-day leeway.
+6. A transient inspection/exchange failure stores the original encrypted token
+   and known deadlines with a recoverable error for the worker. A permanent
+   rejection fails connect with a safe reconnect message.
 
-### 5. Send guard and failure handling
+## Scheduled maintenance worker
 
-`decrypt_connection_token()` becomes the central WhatsApp expiry guard:
+A dedicated loop runs every six hours with startup jitter.
 
-- Return no token for `expired`, `revoked`, or `needs_reauth` connections.
-- Return no token when `token_expires_at` is at or before the current time.
-- Continue returning tokens for active connections inside the rotation window.
+Selection is provider-scoped, bounded to 100 rows, and includes only active or
+recoverable-error WhatsApp connections whose lease/backoff permits work. Due
+rows have unknown classification/expiry, an unenrolled User token, a User token
+inside seven days of expiry, or an unsupported expiring token inside seven days.
+Confirmed non-expiring system/business tokens are skipped.
 
-Existing send paths already treat a missing token as a connection failure. Inbound webhooks do not depend on this guard and remain unaffected.
+Execution uses at most five concurrent Meta requests:
 
-When a WhatsApp send receives a permanent authentication rejection from Meta, the connection is marked `needs_reauth` through a shared helper and alerts are emitted once. Repeated failures do not generate duplicate alerts.
+1. Atomically claim one row with a short lease and commit immediately.
+2. Release the database transaction before any Meta HTTP call.
+3. Inspect or exchange according to the claimed classification.
+4. Compare-and-swap the result only if the encrypted token and lease still match.
+   A reconnect or competing worker therefore cannot be overwritten.
+5. Success atomically stores ciphertext, deadlines, classification, rotation
+   metadata, active status, and cleared error/attempt state.
+6. Transport failures, 408/425/429, and 5xx retain the old token, record a safe
+   code, and schedule capped exponential backoff.
+7. Other permanent 4xx responses or invalid-token metadata mark `needs_reauth`
+   and emit one tenant/admin alert for that failure episode.
 
-### 6. Alerts and health visibility
+No database row lock is held during network I/O. Lease duration exceeds the HTTP
+timeout; stale claims become eligible again after the lease expires.
 
-Tenant alert:
+## Send guard and auth failures
 
-- In-app notification: "WhatsApp needs reconnection" with a Channels deep link.
-- Sent only after a permanent authentication failure, not for transient rotation failures.
+`decrypt_connection_token()` is the central WhatsApp guard:
 
-Admin alert:
+- Return no token for `expired`, `revoked`, or `needs_reauth` status.
+- Return no token when either token expiry or data-access expiry is at/before now.
+- Continue returning tokens for active/recoverable-error connections before the
+  deadline, including those inside the rotation window.
+- Do not change Facebook/Instagram credential behavior.
 
-- Global `AdminNotification` with severity warning, tenant identifier, connection identifier, and safe failure code.
-- No token, token fragment, authorization header, or raw provider response.
+Existing send paths already fail closed on a missing token. Inbound webhook
+persistence does not depend on this guard. Permanent WhatsApp auth failures in
+validation, rotation, and automated send paths use one shared reauth marker.
+The marker conditionally transitions status and creates alerts in the same
+transaction, so repeated failures do not duplicate notifications.
 
-API/UI:
+## Alerts and health visibility
 
-- `MetaConnectionOut` exposes `token_expires_at`, `token_last_rotated_at`, and a coarse `token_health` value (`healthy`, `rotating`, `reauth_required`).
-- The tenant Channels page displays automatic-rotation health and a reconnect action only when required.
-- Existing connection validation and disconnect flows remain unchanged.
+Tenant notification: "WhatsApp needs reconnection" with a Channels deep link,
+only after permanent auth rejection. Unsupported expiring tokens receive one
+pre-expiry attention alert per error episode instead.
+
+Admin notification: global warning with tenant identifier, connection identifier,
+and a safe failure code. No token, fragment, authorization header, app secret,
+or raw provider response is stored or logged.
+
+`MetaConnectionOut` exposes `token_expires_at`, `token_last_rotated_at`, and
+coarse `token_health`: `healthy`, `rotating`, or `reauth_required`. Credentials,
+raw errors, lease details, and token type internals are not exposed.
 
 ## Security invariants
 
-- Tokens remain Fernet-encrypted at rest.
-- Plaintext tokens never enter logs, admin notifications, tenant notifications, telemetry, or API responses.
-- All rotation queries are tenant-safe and provider-scoped.
-- Rotation uses the server-configured Meta app credentials only.
-- The worker is bounded by batch size, concurrency, request timeout, and retry backoff.
-- Permanent auth failures fail closed for new sends; they never silently downgrade to an unauthenticated request.
-- Rotation state changes are atomic with the encrypted token and expiry update.
+- Tokens remain Fernet-encrypted at rest; plaintext exists only in request memory.
+- `/debug_token` uses app credentials, never the inspected token as caller auth.
+- No blind exchange of system/business tokens and no fabricated expiry.
+- Queries are tenant-safe, provider-scoped, indexed, and bounded.
+- Worker batch, concurrency, HTTP timeout, lease, and retry backoff are bounded.
+- Permanent auth failures fail closed for new sends.
+- Rotation state, ciphertext, deadlines, and alerts change atomically.
+- Compare-and-swap prevents stale workers from overwriting reconnects.
 
-## Testing
+## Verification
 
-### Unit/service tests
-
-- Long-lived exchange parses and stores `expires_in`.
-- Missing expiry uses the documented fallback.
-- Due-token selection includes near-expiry, unknown-expiry, and unenrolled tokens.
-- Successful rotation encrypts the new token and clears prior errors.
-- Same-plan retry and concurrent workers cannot double-rotate a connection.
-- Transient failures retain the old token and schedule retry.
-- Permanent rejection marks `needs_reauth` and emits one tenant/admin alert.
-- Expired/revoked/needs-reauth connections return no send token.
-- Active tokens inside the leeway window remain usable.
-- Notifications and logs contain no plaintext token.
-
-### Integration/API tests
-
-- Connect flow stores a long-lived token and expiry.
-- Rotation worker processes a bounded batch and is safe under two workers.
-- Connection API exposes health without exposing credentials.
-- Tenant and admin notifications are created once per failure episode.
-- Existing WhatsApp connect, send, webhook, disconnect, and retention tests remain green.
-
-### Verification gates
-
-- Focused Meta/WhatsApp test files.
-- Full backend suite because the shared `MetaConnection` model and worker entrypoint change.
-- Alembic up/down/up and migration guard.
-- Gitleaks tracked-file scan.
-- TypeScript/build only if the tenant Channels UI changes.
-- Staging smoke test with a dedicated WhatsApp test connection before enabling production traffic.
-
-## Rollout
-
-1. Deploy the migration and code; existing tokens are not cleared.
-2. Worker enrolls existing WhatsApp tokens, validates unknown expiry, and rotates them before expiry.
-3. Verify rotation and alerts with a staging connection.
-4. Monitor rotation success, retry, and reauth-required counts.
-5. Facebook/Instagram rotation remains a separate future change.
-
-## Success criteria
-
-- No merchant is forced to reconnect solely because a WhatsApp token aged out.
-- Revoked or invalid tokens stop new sends and produce actionable tenant/admin alerts.
-- Rotation is auditable, idempotent, bounded, secret-safe, and safe across multiple workers.
+- Unit/service tests for payload/expiry parsing, User-only fallback, app-token
+  inspection, classification, due selection, success, lease/CAS concurrency,
+  retry/backoff, permanent failure, alert dedupe, and guard behavior.
+- Connect/API tests for business-token no-op rotation, User immediate rotation,
+  transient recovery, secret safety, and coarse health fields.
+- Focused Meta/WhatsApp tests, migration guard, Alembic up/down/up, and
+  `git diff --check`. Parent may run the full backend suite afterward.
+- Staging smoke test with a dedicated WhatsApp connection before production.
