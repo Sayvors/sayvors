@@ -271,6 +271,19 @@ async def count_messages_this_month(tenant_id: str, db: AsyncSession) -> int:
 
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    from ..channels.meta.spend_models import WhatsAppMonthlyUsage
+
+    reserved_usage = (
+        await db.execute(
+            select(WhatsAppMonthlyUsage.used_count).where(
+                WhatsAppMonthlyUsage.tenant_id == tenant_id,
+                WhatsAppMonthlyUsage.month == month_start.date(),
+            )
+        )
+    ).scalar_one_or_none()
+    if reserved_usage is not None:
+        return int(reserved_usage)
+    # Compatibility for pre-migration/test databases with no counter row yet.
     channel_ids = (
         await db.execute(
             select(Channel.id).where(

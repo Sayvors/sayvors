@@ -22,6 +22,7 @@ from ...core.crypto import get_fernet as _get_fernet
 from ..team.context import tenant_id_of
 from ..users.models import User
 from .models import Channel, ChannelMessage, ChannelThread, ContactProfile, Lead, WhatsAppQrCode
+from .meta.quota import whatsapp_send_key
 from . import thread_maintenance  # noqa: F401  registers event listeners
 from .schemas import ChannelCreate, ChannelMessageSend
 
@@ -439,6 +440,7 @@ async def send_message(
         handled_by="human",
         reply_to_message_id=quoted_wamid,
     )
+    outbound.quota_idempotency_key = outbound.id
 
     try:
         if channel.platform == "instagram":
@@ -449,6 +451,7 @@ async def send_message(
             provider_msg_id, error = await _dispatch_whatsapp(
                 db, user, channel, contact_phone, body.content,
                 context_message_id=quoted_wamid,
+                idempotency_key=outbound.id,
             )
     except Exception as exc:  # noqa: BLE001 - recorded on the row, not raised
         provider_msg_id, error = "", str(exc)[:500]
@@ -551,11 +554,12 @@ async def react_to_message(
         if error:
             raise ValueError(error)
         async with _one_shot_whatsapp_adapter() as adapter:
-            outbound.platform_message_id = (
-                await adapter.send_reaction(
-                    phone_number_id, token, to, target.platform_message_id, value
-                )
-            )[:200] or None
+            with whatsapp_send_key(outbound.id):
+                outbound.platform_message_id = (
+                    await adapter.send_reaction(
+                        phone_number_id, token, to, target.platform_message_id, value
+                    )
+                )[:200] or None
     except (ValueError, MetaAPIError) as exc:
         outbound.status = "failed"
         outbound.error = str(exc)[:500]
@@ -705,12 +709,13 @@ async def send_location_message(
         )
         if not error:
             async with _one_shot_whatsapp_adapter() as adapter:
-                outbound.platform_message_id = (
-                    await adapter.send_location(
-                        phone_number_id, token, to, latitude, longitude,
-                        name=label or None, address=place or None,
-                    )
-                )[:200] or None
+                with whatsapp_send_key(outbound.id):
+                    outbound.platform_message_id = (
+                        await adapter.send_location(
+                            phone_number_id, token, to, latitude, longitude,
+                            name=label or None, address=place or None,
+                        )
+                    )[:200] or None
     except MetaAPIError as exc:
         error = str(exc)
     except Exception as exc:  # noqa: BLE001 - recorded on the row
@@ -783,11 +788,12 @@ async def send_contact_message(
         )
         if not error:
             async with _one_shot_whatsapp_adapter() as adapter:
-                outbound.platform_message_id = (
-                    await adapter.send_contacts(
-                        phone_number_id, token, to, [card]
-                    )
-                )[:200] or None
+                with whatsapp_send_key(outbound.id):
+                    outbound.platform_message_id = (
+                        await adapter.send_contacts(
+                            phone_number_id, token, to, [card]
+                        )
+                    )[:200] or None
     except MetaAPIError as exc:
         error = str(exc)
     except Exception as exc:  # noqa: BLE001 - recorded on the row
@@ -887,12 +893,13 @@ async def send_document_message(
                 )
                 if not media_id:
                     raise MetaAPIError("WhatsApp returned no media id for the document")
-                outbound.platform_message_id = (
-                    await adapter.send_document(
-                        phone_number_id, token, to, media_id,
-                        filename=name, caption=body or None,
-                    )
-                )[:200] or None
+                with whatsapp_send_key(outbound.id):
+                    outbound.platform_message_id = (
+                        await adapter.send_document(
+                            phone_number_id, token, to, media_id,
+                            filename=name, caption=body or None,
+                        )
+                    )[:200] or None
     except MetaAPIError as exc:
         error = str(exc)
     except Exception as exc:  # noqa: BLE001 - recorded on the row
@@ -985,11 +992,12 @@ async def send_sticker_message(
                 )
                 if not media_id:
                     raise MetaAPIError("WhatsApp returned no media id for the sticker")
-                outbound.platform_message_id = (
-                    await adapter.send_sticker(
-                        phone_number_id, token, to, media_id
-                    )
-                )[:200] or None
+                with whatsapp_send_key(outbound.id):
+                    outbound.platform_message_id = (
+                        await adapter.send_sticker(
+                            phone_number_id, token, to, media_id
+                        )
+                    )[:200] or None
     except MetaAPIError as exc:
         error = str(exc)
     except Exception as exc:  # noqa: BLE001 - recorded on the row
@@ -1075,6 +1083,7 @@ async def _dispatch_whatsapp(
     text: str,
     *,
     context_message_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> tuple[str, str]:
     """(provider_message_id, error). Exactly one of the two is meaningful.
 
@@ -1090,10 +1099,11 @@ async def _dispatch_whatsapp(
 
     try:
         async with _one_shot_whatsapp_adapter() as adapter:
-            provider_msg_id = await adapter.send_text_message(
-                phone_number_id, token, to, text,
-                context_message_id=context_message_id,
-            )
+            with whatsapp_send_key(idempotency_key or str(uuid.uuid4())):
+                provider_msg_id = await adapter.send_text_message(
+                    phone_number_id, token, to, text,
+                    context_message_id=context_message_id,
+                )
     except MetaAPIError as exc:
         detail = f"{exc.status_code}: {exc}" if exc.status_code else str(exc)
         return "", detail[:500]
@@ -1241,9 +1251,10 @@ async def send_interactive_message(
     )
 
     try:
-        provider_msg_id, error = await _dispatch_whatsapp_interactive(
-            db, user, channel, recipient, kind, payload
-        )
+        with whatsapp_send_key(outbound.id):
+            provider_msg_id, error = await _dispatch_whatsapp_interactive(
+                db, user, channel, recipient, kind, payload,
+            )
     except Exception as exc:  # noqa: BLE001 - recorded on the row, not raised
         provider_msg_id, error = "", str(exc)[:500]
 

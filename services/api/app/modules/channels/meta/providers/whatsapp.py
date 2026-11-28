@@ -154,13 +154,31 @@ class WhatsAppAdapter(MetaProviderAdapter):
         if not is_message_send:
             return await super()._graph(method, path, token, **kwargs)
 
+        phone_number_id = _SEND_PATH.match(path).group(1)
+        reservation = await self._reserve_message_quota(phone_number_id, payload)
+        try:
+            response = await super()._graph(method, path, token, **kwargs)
+            messages = (response.json() or {}).get("messages") or []
+            provider_message_id = messages[0].get("id") if messages else None
+        except MetaTransportError:
+            await self._settle_quota(reservation.id, "released", failure_classification="transport_never_reached")
+            raise
+        except Exception:
+            # Meta HTTP rejections and mid-flight ambiguity may have reached the
+            # provider. Preserve the existing product policy: they count once.
+            await self._settle_quota(reservation.id, "consumed")
+            raise
+        await self._settle_quota(reservation.id, "consumed", provider_message_id=provider_message_id)
+        return response
+
+    async def _reserve_message_quota(self, phone_number_id: str, payload: dict):
+        """Resolve the tenant from the current phone asset and reserve one send."""
         from sqlalchemy import select
         from ..models import MetaAsset
         from ..quota import (
             _factory as quota_factory, current_send_key, reserve_whatsapp_send,
         )
 
-        phone_number_id = _SEND_PATH.match(path).group(1)
         context_id = (payload.get("context") or {}).get("message_id")
         canonical = (
             json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -182,24 +200,12 @@ class WhatsAppAdapter(MetaProviderAdapter):
                 )
             ).scalar_one_or_none()
             if asset is None:
-                raise MetaPermanentError("WhatsApp number is not connected to an active tenant asset")
-            reservation = await reserve_whatsapp_send(
+                raise MetaPermanentError(
+                    "WhatsApp number is not connected to an active tenant asset"
+                )
+            return await reserve_whatsapp_send(
                 db, asset.tenant_id, phone_number_id, send_key,
             )
-        try:
-            response = await super()._graph(method, path, token, **kwargs)
-            messages = (response.json() or {}).get("messages") or []
-            provider_message_id = messages[0].get("id") if messages else None
-        except MetaTransportError:
-            await self._settle_quota(reservation.id, "released", failure_classification="transport_never_reached")
-            raise
-        except Exception:
-            # Meta HTTP rejections and mid-flight ambiguity may have reached the
-            # provider. Preserve the existing product policy: they count once.
-            await self._settle_quota(reservation.id, "consumed")
-            raise
-        await self._settle_quota(reservation.id, "consumed", provider_message_id=provider_message_id)
-        return response
 
     async def _settle_quota(
         self, reservation_id: str, outcome: str, *,

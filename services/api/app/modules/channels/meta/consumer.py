@@ -33,6 +33,7 @@ from ...channels.service import (
     hash_contact_phone,
 )
 from .models import MetaAsset
+from .quota import whatsapp_send_key
 from .webhooks.parser import is_message_status_event
 
 logger = logging.getLogger(__name__)
@@ -1033,7 +1034,7 @@ async def _channel_for(
 
 async def _send_catalog_image(
     db, adapter, channel, tenant_id: str, phone_number_id: str, token: str,
-    to: str, item_id: str,
+    to: str, item_id: str, *, idempotency_key: str | None = None,
 ) -> None:
     """Send the photo of one catalog item the model asked for.
 
@@ -1058,9 +1059,10 @@ async def _send_catalog_image(
             return
         price = price_display(item)
         caption = f"{item.name} — {price}" if price else item.name
-        provider_msg_id = await adapter.send_image(
-            phone_number_id, token, to, item.image_url, caption
-        )
+        with whatsapp_send_key(idempotency_key or str(uuid.uuid4())):
+            provider_msg_id = await adapter.send_image(
+                phone_number_id, token, to, item.image_url, caption
+            )
     except Exception as e:  # noqa: BLE001 - never break the reply flow
         logger.warning(
             "catalog image failed item=%s: %s: %s",
@@ -2328,10 +2330,11 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 # the inbox. A reply that only existed on WhatsApp would leave
                 # the agent staring at a conversation that looks unanswered.
                 try:
-                    provider_msg_id = await adapter.send_text_message(
-                        phone_number_id, token, from_wa, canned,
-                        context_message_id=wamid,
-                    )
+                    with whatsapp_send_key(f"ai:{wamid}:short"):
+                        provider_msg_id = await adapter.send_text_message(
+                            phone_number_id, token, from_wa, canned,
+                            context_message_id=wamid,
+                        )
                 except MetaAmbiguousError as e:
                     # The send may have landed; the outbox retry must not
                     # re-send it. The row stays pending and the re-raise
@@ -2626,10 +2629,11 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                     media_id = await adapter.upload_media(
                         phone_number_id, token, audio_bytes, mime_type
                     )
-                    provider_msg_id = await adapter.send_voice_note(
-                        phone_number_id, token, from_wa, media_id,
-                        voice=is_voice,
-                    )
+                    with whatsapp_send_key(f"ai:{wamid}:voice"):
+                        provider_msg_id = await adapter.send_voice_note(
+                            phone_number_id, token, from_wa, media_id,
+                            voice=is_voice,
+                        )
                 except Exception as e:  # noqa: BLE001 — MetaAPIError, httpx, anything
                     # Network blips raise httpx.HTTPError, not MetaAPIError —
                     # catch everything: a voice problem may never cost the
@@ -2735,15 +2739,19 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 quote_id = wamid if index == 0 else None
                 try:
                     if use_buttons:
-                        provider_msg_id = await adapter.send_interactive_buttons(
-                            phone_number_id, token, from_wa, part, choices,
-                            context_message_id=quote_id,
-                        )
+                        send_key = f"ai:{wamid}:{index}:interactive"
+                        with whatsapp_send_key(send_key):
+                            provider_msg_id = await adapter.send_interactive_buttons(
+                                phone_number_id, token, from_wa, part, choices,
+                                context_message_id=quote_id,
+                            )
                     else:
-                        provider_msg_id = await adapter.send_text_message(
-                            phone_number_id, token, from_wa, part,
-                            context_message_id=quote_id,
-                        )
+                        send_key = f"ai:{wamid}:{index}:text"
+                        with whatsapp_send_key(send_key):
+                            provider_msg_id = await adapter.send_text_message(
+                                phone_number_id, token, from_wa, part,
+                                context_message_id=quote_id,
+                            )
                 except MetaAmbiguousError as e:
                     # Mid-flight failure (timeout, broken response): the send
                     # may have landed, so this reply is neither retried nor
@@ -2772,10 +2780,11 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                             getattr(e, "status_code", ""),
                         )
                         try:
-                            provider_msg_id = await adapter.send_text_message(
-                                phone_number_id, token, from_wa, part,
-                                context_message_id=quote_id,
-                            )
+                            with whatsapp_send_key(f"ai:{wamid}:{index}:fallback-text"):
+                                provider_msg_id = await adapter.send_text_message(
+                                    phone_number_id, token, from_wa, part,
+                                    context_message_id=quote_id,
+                                )
                         except MetaAPIError as fallback_error:
                             e = fallback_error
                         else:
@@ -2887,6 +2896,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             await _send_catalog_image(
                 db, adapter, channel, tenant_id, phone_number_id, token,
                 from_wa, send_item_id,
+                idempotency_key=f"ai:{wamid}:catalog:{send_item_id}",
             )
 
         # Native card the model requested (location / contact). Sent after the
@@ -2925,6 +2935,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 fallback_text=(
                     sticker_fallback_text(sticker_key) if not reply else None
                 ),
+                idempotency_key=f"ai:{wamid}:sticker:{sticker_key}",
             )
 
         # Lead engine, send side: merge whatever the reply call extracted,

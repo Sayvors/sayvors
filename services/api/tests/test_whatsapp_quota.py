@@ -84,6 +84,28 @@ async def test_plan_allowance_plus_bonus_and_month_reset(db, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_released_transport_failure_is_not_counted_by_existing_gate(db):
+    from app.modules.billing.entitlements import count_messages_this_month
+    from app.modules.channels.models import Channel, ChannelMessage
+
+    uid = await _seed(db)
+    channel = Channel(
+        id=f"chan-{uid}", user_id=uid, platform="whatsapp",
+        platform_user_id="pn-1", status="active",
+    )
+    db.add(channel)
+    await db.flush()
+    db.add(ChannelMessage(
+        id=f"msg-{uid}", channel_id=channel.id, direction="outbound",
+        content="failed before Meta", status="failed",
+    ))
+    await db.commit()
+    reservation = await quota.reserve_whatsapp_send(db, uid, "pn-1", "never-reached")
+    await quota.settle_whatsapp_reservation(db, reservation.id, "released")
+    assert await count_messages_this_month(uid, db) == 0
+
+
+@pytest.mark.asyncio
 async def test_postgres_row_lock_serializes_concurrent_reservations():
     url = os.environ.get("WHATSAPP_QUOTA_TEST_DATABASE_URL")
     if not url:

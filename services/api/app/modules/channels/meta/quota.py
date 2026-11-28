@@ -7,6 +7,7 @@ releases it; Meta HTTP errors and ambiguous mid-flight failures stay charged.
 """
 from __future__ import annotations
 
+import hashlib
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date, datetime, timezone
@@ -44,11 +45,20 @@ def current_month() -> date:
 def _factory():
     if _session_factory is not None:
         return _session_factory
-    from ...database import async_session
+    from ....database import async_session
     return async_session
 
 
 async def _ensure_month_row(db, tenant_id: str, month: date) -> None:
+    if db.bind.dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+
+        await db.execute(
+            insert(WhatsAppMonthlyUsage)
+            .values(tenant_id=tenant_id, month=month, used_count=0)
+            .on_conflict_do_nothing(index_elements=["tenant_id", "month"])
+        )
+        return
     try:
         async with db.begin_nested():
             db.add(WhatsAppMonthlyUsage(tenant_id=tenant_id, month=month, used_count=0))
@@ -153,6 +163,9 @@ async def reconcile_provider_sent(
 ) -> WhatsAppQuotaReservation:
     """Count a provider-confirmed send once, even if local dispatch predates quota."""
     wamid = provider_message_id[:200]
+    reconciliation_key = f"provider:{hashlib.sha256(wamid.encode()).hexdigest()}"
+    month = current_month()
+    usage = await _locked_month_row(db, tenant_id, month)
     reservation = (
         await db.execute(
             select(WhatsAppQuotaReservation).where(
@@ -165,16 +178,14 @@ async def reconcile_provider_sent(
             await db.execute(
                 select(WhatsAppQuotaReservation).where(
                     WhatsAppQuotaReservation.tenant_id == tenant_id,
-                    WhatsAppQuotaReservation.idempotency_key == f"provider:{wamid}"[:160],
+                    WhatsAppQuotaReservation.idempotency_key == reconciliation_key,
                 )
             )
         ).scalar_one_or_none()
-    month = current_month()
-    usage = await _locked_month_row(db, tenant_id, month)
     if reservation is None:
         reservation = WhatsAppQuotaReservation(
             tenant_id=tenant_id, month=month,
-            idempotency_key=f"provider:{wamid}"[:160], status="consumed",
+            idempotency_key=reconciliation_key, status="consumed",
             phone_number_id=phone_number_id, provider_message_id=wamid,
             settled_at=datetime.now(timezone.utc),
         )

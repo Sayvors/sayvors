@@ -792,6 +792,7 @@ async def send_template(
     from ..channels.meta.providers.whatsapp import MetaAPIError
     from ..channels.meta.reauth import handle_meta_auth_failure
     from ..channels.meta.service import get_adapter
+    from ..channels.meta.quota import whatsapp_send_key
 
     expected_ciphertext = asset.connection.access_token_encrypted
     token = decrypt_connection_token(asset.connection)
@@ -803,10 +804,11 @@ async def send_template(
 
     adapter = get_adapter("whatsapp")
     try:
-        provider_id = await adapter.send_template_message(
-            channel.platform_user_id, token, contact_phone,
-            template.name, template.language, values,
-        )
+        with whatsapp_send_key(f"template:{key}"):
+            provider_id = await adapter.send_template_message(
+                channel.platform_user_id, token, contact_phone,
+                template.name, template.language, values,
+            )
     except MetaAPIError as e:
         auth_failed = await handle_meta_auth_failure(
             db, asset.connection, e, expected_ciphertext=expected_ciphertext,
