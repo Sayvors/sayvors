@@ -4,7 +4,7 @@ POST   /api/v1/admin/login   exchange the admin password for a short token
 GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
@@ -2533,8 +2533,7 @@ async def list_plan_features(_admin=Depends(require_admin)):
 
 @router.get("/whatsapp-spend")
 async def admin_whatsapp_spend(
-    start: date = Query(...),
-    end: date = Query(...),
+    days: int = Query(30, ge=1, le=365),
     tenant_id: str | None = Query(None, max_length=36),
     waba_id: str | None = Query(None, max_length=100),
     _admin: dict = Depends(require_admin),
@@ -2546,7 +2545,7 @@ async def admin_whatsapp_spend(
 
     try:
         return await admin_spend(
-            db, start=start, end=end, tenant_id=tenant_id, waba_id=waba_id
+            db, days=days, tenant_id=tenant_id, waba_id=waba_id
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

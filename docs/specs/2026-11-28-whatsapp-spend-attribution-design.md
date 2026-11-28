@@ -17,7 +17,7 @@ Give tenants and admins real-time WhatsApp message usage plus daily Meta-reporte
 
 Add additive, idempotent tables:
 
-- `whatsapp_spend_daily`: tenant, WABA, date/bucket, phone, country, pricing category/type/tier, volume, optional decimal cost, optional native currency, cost status, funding mode (`direct_client` vs `shared_credit_line`/platform-liable), WABA timezone, optional messaging account ID, source, fetched/updated timestamps. Unique attribution hash includes every pricing dimension per tenant/WABA/date.
+- `whatsapp_spend_daily`: tenant, WABA, current Messaging account ID where available, date, phone, country, pricing category/type/tier, volume, optional decimal cost, native currency, cost status, funding mode (`direct_client`, `shared_credit_line`, `platform_liable`, or `unknown`), WABA timezone, source, fetched/updated timestamps. The attribution hash and unique constraint include every pricing dimension (phone/country/category/type/tier) plus Messaging account identity, scoped by tenant/WABA/date.
 - `whatsapp_quota_reservations`: tenant, channel, month, idempotency key, status (`reserved`, `consumed`, `released`), timestamps. Unique tenant/idempotency key.
 - `whatsapp_monthly_usage`: tenant/month, used count, updated timestamp. Unique tenant/month.
 
@@ -28,9 +28,8 @@ Indexes support tenant/date and WABA/date rollups. Existing message rows are bac
 - Every WhatsApp send reserves quota before the provider call.
 - Reservation and monthly counter increment are atomic under a tenant/month row lock.
 - Duplicate idempotency keys return the existing reservation.
-- Successful sends and failures that may have reached Meta mark consumed and count once, preserving the existing failed-attempt quota policy.
-- Only provably pre-send/transport-never-reached failures release and decrement.
-- Typing/read indicators do not reserve quota; every actual Messages API send, including each multi-part AI reply, reserves independently.
+- Successful sends mark consumed. Failed or ambiguous attempts count once when they may have reached Meta; only a proven pre-send/transport-never-reached failure releases and decrements exactly once.
+- Typing/read indicators are not messages and never reserve quota. Every actual Messages API call in a multi-part AI reply reserves separately; bulk delivery rechecks at send time.
 - The existing plan allowance plus additive bonuses remains authoritative.
 - Redis is not the quota source of truth; PostgreSQL arbitrates concurrent workers.
 
@@ -38,10 +37,10 @@ Indexes support tenant/date and WABA/date rollups. Existing message rows are bac
 
 - Worker runs daily with bounded batches and concurrency.
 - Fetches a rolling 7-day window to capture Meta adjustments.
-- Uses DAILY granularity and dimensions COUNTRY, PHONE, PRICING_CATEGORY, PRICING_TYPE, TIER.
-- Upserts idempotently by attribution hash.
+- Uses the current WABA/Messaging account ID, DAILY granularity, dimensions COUNTRY, PHONE, PRICING_CATEGORY, PRICING_TYPE, TIER, and COST+VOLUME. Deprecated `conversation_analytics` is not used for spend.
+- Upserts idempotently by the full attribution hash so rolling Meta adjustments replace prior facts.
+- Retains status-webhook `billable`, `pricing_model`, category/type/subtype and processes `sent` status for provider-confirmed reconciliation.
 - Stores null cost with `cost_status=unavailable` when Meta withholds COST.
-- Retains status-webhook pricing fields (`billable`, `pricing_model`, category/type/subtype) and processes `sent` status for provider-confirmed reconciliation.
 - Retires deprecated conversation analytics for spend; WABA `pricing_analytics` is authoritative for approximate Meta cost.
 
 ## APIs and UI
@@ -51,7 +50,7 @@ Tenant:
 - Channels page shows a WhatsApp usage/spend card with “syncing from Meta” state.
 
 Admin:
-- Spend endpoint returns per-tenant/WABA totals and cost availability.
+- Spend endpoint returns per-tenant/WABA totals and cost availability, grouped by native currency and funding mode. Only `platform_liable` and `shared_credit_line` spend is Sayvors-payable COGS; client-direct and unknown amounts are never mixed into margin.
 - Financials page shows WhatsApp spend and volume alongside existing finance rows.
 - Client-direct Meta spend is shown separately and never subtracted from Sayvors platform margin; only platform-liable/shared-credit spend enters Sayvors COGS.
 
@@ -62,7 +61,8 @@ All routes are tenant-scoped or admin-gated. No token or raw provider payload is
 - Pricing response parsing, dimensions, volume/cost/currency, unavailable cost.
 - Idempotent retry/upsert and rolling-window adjustments.
 - WABA/phone/tenant attribution and date boundaries.
-- Atomic quota race, duplicate reservation, release, and monthly reset.
+- Atomic quota race, duplicate reservation, release, monthly reset, and status reconciliation.
+- Funding mode/native currency/WABA timezone/Messaging account attribution; client-direct spend excluded from COGS.
 - Existing send, template, AI reply, lead action, webhook, and billing tests.
 - Tenant/admin RBAC and isolation.
 - UI local count, pending sync, unavailable cost, and Arabic copy.

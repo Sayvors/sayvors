@@ -1,6 +1,5 @@
 """Tenant-facing billing routes (wallet, plan, entitlements, requests)."""
 import logging
-from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -320,8 +319,7 @@ async def list_purchase_requests(
 
 @router.get("/whatsapp-usage")
 async def read_whatsapp_usage(
-    start: date = Query(...),
-    end: date = Query(...),
+    days: int = Query(30, ge=1, le=365),
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -329,7 +327,7 @@ async def read_whatsapp_usage(
     from ..channels.meta.spend_api import tenant_usage
 
     try:
-        return await tenant_usage(db, tenant_id_of(user), start=start, end=end)
+        return await tenant_usage(db, tenant_id_of(user), days=days)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

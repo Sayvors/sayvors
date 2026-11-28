@@ -51,27 +51,34 @@ async def test_tenant_usage_is_scoped_and_keeps_funding_currencies_separate(clie
     other = "other-spend-tenant"
     await _seed(db, user_id)
     await _seed(db, other, funding="platform_liable", cost=Decimal("99.00"))
-    response = client.get(
-        "/api/v1/billing/whatsapp-usage",
-        params={"start": "2026-11-01", "end": "2026-11-29"},
-    )
+    response = client.get("/api/v1/billing/whatsapp-usage", params={"days": 30})
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["used"] == 3
     assert body["limit"] == 7
     assert body["remaining"] == 4
+    assert body["approximate_cost"] == 10.0
+    assert body["currency"] == "SAR"
+    assert body["funding_mode"] == "direct_client"
+    assert body["cost_availability"] == "available"
+    assert body["sync_status"] == "synced"
+    assert body["last_meta_sync_at"] is not None
     assert body["totals"] == [{
         "currency": "SAR", "funding_mode": "direct_client",
-        "approx_cost": 10.0, "volume": 2, "unavailable_volume": 0,
+        "approximate_cost": 10.0, "volume": 2,
+        "cost_availability": "available",
+        "last_meta_sync_at": body["last_meta_sync_at"],
     }]
-    assert all(row["tenant_id"] == user_id for row in body["breakdowns"])
+    assert body["breakdowns"]["by_waba"][0]["waba_id"] == "waba-1"
+    assert body["breakdowns"]["by_phone"][0]["phone"] == "966500000001"
+    assert body["breakdowns"]["by_category"][0]["category"] == "UTILITY"
 
 
 @pytest.mark.asyncio
 async def test_admin_requires_admin_and_cogs_excludes_client_direct(client, db, user_id):
     await _seed(db, user_id)
     await _seed(db, "platform-tenant", funding="platform_liable", cost=Decimal("20.00"))
-    params = {"start": "2026-11-01", "end": "2026-11-29"}
+    params = {"days": 30}
     assert client.get("/api/v1/admin/whatsapp-spend", params=params).status_code in (401, 403)
 
     from app.main import app
@@ -82,10 +89,14 @@ async def test_admin_requires_admin_and_cogs_excludes_client_direct(client, db, 
         app.dependency_overrides.pop(require_admin, None)
     assert response.status_code == 200, response.text
     body = response.json()
+    assert body["days"] == 30
+    assert body["total"] == 2
     assert len(body["items"]) == 2
-    assert body["cogs"] == [{
-        "currency": "SAR", "approx_cost": 20.0, "volume": 2,
-    }]
+    assert {row["tenant_name"] for row in body["items"]} == {"Spend Test"}
+    assert all(row["waba_id"] == "waba-1" for row in body["items"])
+    assert {row["funding_mode"] for row in body["totals"]} == {
+        "direct_client", "platform_liable",
+    }
     filtered = client.get(
         "/api/v1/admin/whatsapp-spend",
         params={**params, "tenant_id": user_id},
@@ -94,16 +105,30 @@ async def test_admin_requires_admin_and_cogs_excludes_client_direct(client, db, 
 
 
 @pytest.mark.asyncio
+async def test_mixed_currencies_are_never_summed_at_top_level(client, db, user_id):
+    await _seed(db, user_id)
+    await upsert_spend_result(db, user_id, "waba-1", {
+        "points": [_point(phone="966500000002", cost=Decimal("20.00"))],
+        "currency": "USD", "funding_mode": "direct_client",
+        "messaging_account_id": "ma-1",
+    })
+    body = client.get(
+        "/api/v1/billing/whatsapp-usage", params={"days": 30}
+    ).json()
+    assert {row["currency"] for row in body["totals"]} == {"SAR", "USD"}
+    assert body["approximate_cost"] in (10.0, 20.0)
+    assert body["currency"] in ("SAR", "USD")
+
+
+@pytest.mark.asyncio
 async def test_unavailable_cost_is_visible_and_date_range_is_bounded(client, db, user_id):
     await _seed(db, user_id, cost=None)
-    response = client.get(
-        "/api/v1/billing/whatsapp-usage",
-        params={"start": "2026-11-01", "end": "2026-11-29"},
-    )
+    response = client.get("/api/v1/billing/whatsapp-usage", params={"days": 30})
     assert response.status_code == 200
-    assert response.json()["totals"][0]["approx_cost"] is None
-    assert response.json()["totals"][0]["unavailable_volume"] == 2
+    assert response.json()["approximate_cost"] is None
+    assert response.json()["cost_availability"] == "unavailable"
+    assert response.json()["totals"][0]["approximate_cost"] is None
+    assert response.json()["totals"][0]["cost_availability"] == "unavailable"
     assert client.get(
-        "/api/v1/billing/whatsapp-usage",
-        params={"start": "2020-01-01", "end": "2026-11-29"},
+        "/api/v1/billing/whatsapp-usage", params={"days": 31}
     ).status_code == 422
