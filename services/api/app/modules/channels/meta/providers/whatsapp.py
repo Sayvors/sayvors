@@ -1231,6 +1231,73 @@ class WhatsAppAdapter(MetaProviderAdapter):
             "total": sum(p["count"] for p in points),
         }
 
+    @staticmethod
+    def parse_pricing_analytics(payload: dict) -> dict:
+        """Normalize Meta's approximate pricing facts without inventing cost.
+
+        ``end`` is exclusive in Meta's API, so each point is attributed to the
+        UTC calendar date of ``start``. A missing/null cost is an explicit
+        unavailable fact (common on shared Solution Partner credit lines), not
+        zero and never a locally estimated rate.
+        """
+        analytics = (payload or {}).get("pricing_analytics") or {}
+        points: list[dict] = []
+        for group in analytics.get("data") or []:
+            for raw in group.get("data_points") or []:
+                try:
+                    started = datetime.fromtimestamp(int(raw["start"]), tz=timezone.utc)
+                    volume = max(0, int(raw.get("volume") or 0))
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    continue
+                raw_cost = raw.get("cost", raw.get("approximate_cost"))
+                unavailable = bool(raw.get("cost_unavailable")) or raw_cost is None
+                cost = None
+                if not unavailable:
+                    try:
+                        parsed = Decimal(str(raw_cost))
+                        if not parsed.is_finite() or parsed < 0:
+                            raise InvalidOperation
+                        cost = parsed
+                    except (InvalidOperation, TypeError, ValueError):
+                        unavailable = True
+                points.append({
+                    "spend_date": started.date(),
+                    "phone": str(raw.get("phone_number") or raw.get("phone") or "")[:50] or None,
+                    "country": str(raw.get("country") or "")[:8].upper() or None,
+                    "pricing_category": str(raw.get("pricing_category") or "")[:50] or None,
+                    "pricing_type": str(raw.get("pricing_type") or "")[:50] or None,
+                    "tier": str(raw.get("tier") or "")[:50] or None,
+                    "volume": volume,
+                    "cost": cost,
+                    "cost_status": "unavailable" if unavailable else "available",
+                })
+        points.sort(key=lambda p: tuple(str(p[k]) for k in (
+            "spend_date", "phone", "country", "pricing_category", "pricing_type", "tier"
+        )))
+        return {
+            "points": points[:5000],
+            "currency": str(analytics.get("currency") or "")[:8].upper() or None,
+            "funding_mode": str(analytics.get("funding_mode") or "")[:40] or None,
+            "waba_timezone": str(analytics.get("timezone") or analytics.get("waba_timezone") or "")[:64] or None,
+            "messaging_account_id": str(analytics.get("messaging_account_id") or "")[:100] or None,
+        }
+
+    async def get_pricing_analytics(
+        self, waba_id: str, token: str, *, start: date, end: date
+    ) -> dict:
+        """Fetch authoritative approximate cost/volume for a UTC date window."""
+        if end <= start:
+            raise ValueError("end must be after start")
+        start_ts = int(datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+        end_ts = int(datetime.combine(end, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+        fields = (
+            f"pricing_analytics.start({start_ts}).end({end_ts}).granularity(DAILY)"
+            ".dimensions(COUNTRY,PHONE,PRICING_CATEGORY,PRICING_TYPE,TIER)"
+            ".metric_types(COST,VOLUME)"
+        )
+        resp = await self._graph("GET", f"/{waba_id}", token, params={"fields": fields})
+        return self.parse_pricing_analytics(resp.json() or {})
+
     async def get_business_profile(self, phone_number_id: str, token: str) -> dict:
         """Fetch the WhatsApp business profile for a number.
 
