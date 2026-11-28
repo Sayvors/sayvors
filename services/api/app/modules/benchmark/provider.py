@@ -32,13 +32,14 @@ def _wants_deep(reviews_limit: int) -> bool:
 
 async def _deep_reviews(
     place_id: str, *, reviews_limit: int, maps_url: str | None,
-    review_days: int | None,
+    review_days: int | None, full_history: bool,
 ) -> dict | None:
     """Paged BOQ reviews, only when a canonical feature ID is available."""
     if not boq.feature_id(maps_url) or not _wants_deep(reviews_limit):
         return None
     return await boq.get_place(
-        place_id, reviews_limit=reviews_limit, maps_url=maps_url, days=review_days
+        place_id, reviews_limit=reviews_limit, maps_url=maps_url,
+        days=review_days, full_history=full_history,
     )
 
 
@@ -58,7 +59,7 @@ def _merge_official_with_deep(official: dict, deep: dict, maps_url: str | None) 
 
 async def _official_then_boq(
     place_id: str, *, reviews_limit: int, maps_url: str | None,
-    cutoff: int | None, review_days: int | None,
+    cutoff: int | None, review_days: int | None, full_history: bool,
 ) -> dict:
     official: dict | None = None
     places_error: Exception | None = None
@@ -79,6 +80,7 @@ async def _official_then_boq(
             deep = await _deep_reviews(
                 place_id, reviews_limit=reviews_limit,
                 maps_url=maps_url, review_days=review_days,
+                full_history=full_history,
             )
         except boq.BoqError as exc:
             deep_error = exc
@@ -105,12 +107,14 @@ async def get_details(
     maps_url: str | None = None,
     cutoff: int | None = None,
     review_days: int | None = None,
+    full_history: bool = False,
 ) -> dict:
     """Provider-routed details with official-first order and BOQ fallback."""
     source = str(source or "").strip()
     if source in {"boq", "gosom"}:
         return await boq.get_place(
-            place_id, reviews_limit=reviews_limit, maps_url=maps_url, days=review_days
+            place_id, reviews_limit=reviews_limit, maps_url=maps_url,
+            days=review_days, full_history=full_history,
         )
     if source == "outscraper":
         try:
@@ -125,4 +129,5 @@ async def get_details(
     return await _official_then_boq(
         place_id, reviews_limit=reviews_limit, maps_url=maps_url,
         cutoff=cutoff, review_days=review_days,
+        full_history=full_history,
     )

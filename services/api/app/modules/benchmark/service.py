@@ -107,6 +107,9 @@ def serialize_config(row: BenchmarkConfig) -> dict:
         "retention_days": row.retention_days,
         "place_cache_enabled": row.place_cache_enabled,
         "max_saved_places": row.max_saved_places,
+        "review_history_mode": row.review_history_mode,
+        "max_reviews_per_place": row.max_reviews_per_place,
+        "full_history_batch": row.full_history_batch,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
@@ -379,6 +382,8 @@ CONFIG_BOUNDS: dict[str, tuple[int, int]] = {
     "refresh_hours": (1, 168),
     "retention_days": (7, 3650),
     "max_saved_places": (1, 500),
+    "max_reviews_per_place": (10, 20_000),
+    "full_history_batch": (1, 10),
 }
 
 
@@ -392,6 +397,11 @@ async def update_config(db: AsyncSession, **values: object) -> BenchmarkConfig:
     for key, value in values.items():
         if key == "place_cache_enabled":
             row.place_cache_enabled = bool(value)
+            continue
+        if key == "review_history_mode":
+            if value not in {"recent", "full"}:
+                raise BenchError("review_history_mode must be recent or full.")
+            row.review_history_mode = str(value)
             continue
         if key not in CONFIG_BOUNDS:
             raise BenchError(f"Unknown benchmark setting: {key}")

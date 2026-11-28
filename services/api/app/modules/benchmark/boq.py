@@ -67,7 +67,11 @@ MAX_PAGES = 30
 # How much review history we keep per place: recent momentum, bounded so one
 # very busy listing cannot monopolize the worker.
 DEFAULT_REVIEW_WINDOW_DAYS = 30
-DEFAULT_MAX_REVIEWS = 500
+DEFAULT_MAX_REVIEWS = 250
+# Opt-in full-history mode: still bounded, because a 22k-review business must
+# not be able to run forever or dominate a shared worker.
+MAX_PAGES_FULL = 1000
+MAX_REVIEWS_FULL = 20_000
 
 REVIEW_TEXT_LIMIT = 4000
 AUTHOR_LIMIT = 255
@@ -275,21 +279,24 @@ def _map_reviews(raw_reviews: list[Any], *, cutoff: datetime | None,
     return oldest
 
 
-def _pages_for(max_reviews: int) -> int:
-    """Pages needed to reach ``max_reviews``, bounded by ``MAX_PAGES``."""
+def _pages_for(max_reviews: int, *, full_history: bool = False) -> int:
+    """Pages needed to reach ``max_reviews``, bounded by the selected ceiling."""
     if max_reviews <= FIRST_PAGE_SIZE:
         return 1
     remaining = max_reviews - FIRST_PAGE_SIZE
-    return max(1, min(MAX_PAGES, 1 + math.ceil(remaining / PAGE_SIZE)))
+    cap = MAX_PAGES_FULL if full_history else MAX_PAGES
+    return max(1, min(cap, 1 + math.ceil(remaining / PAGE_SIZE)))
 
 
 async def _fetch_reviews_on_client(
-    key: str, *, limit: int, cutoff: datetime | None, session: Any
+    key: str, *, limit: int, cutoff: datetime | None, session: Any,
+    full_history: bool = False,
 ) -> list[dict[str, Any]]:
     reviews: list[dict[str, Any]] = []
     seen: set[str] = set()
     token = ""
-    for page in range(_pages_for(limit)):
+    pages = _pages_for(limit, full_history=full_history)
+    for page in range(pages):
         try:
             response = await session.get(
                 BOQ_URL,
@@ -325,7 +332,7 @@ async def _fetch_reviews_on_client(
             break  # sorted newest: every later page is older still
         if not token or len(reviews) >= limit:
             break
-        if page + 1 < _pages_for(limit):
+        if page + 1 < pages:
             await asyncio.sleep(PAGE_DELAY_SECONDS)
     reviews.sort(key=lambda row: row.get("publish_time") or "", reverse=True)
     return reviews[:limit]
@@ -336,6 +343,7 @@ async def fetch_reviews(
     *,
     max_reviews: int = DEFAULT_MAX_REVIEWS,
     days: int | None = DEFAULT_REVIEW_WINDOW_DAYS,
+    full_history: bool = False,
     client: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Read up to ``max_reviews`` reviews, newest first, stopping at the window.
@@ -350,17 +358,20 @@ async def fetch_reviews(
     if not key:
         raise BoqError("Place has no Google feature id", 422)
     try:
-        limit = max(1, int(max_reviews))
+        limit = max(1, min(int(max_reviews), MAX_REVIEWS_FULL))
     except (TypeError, ValueError):
         limit = DEFAULT_MAX_REVIEWS
     cutoff = (
-        datetime.now(timezone.utc) - timedelta(days=days)
-        if days and days > 0 else None
+        None if full_history else (
+            datetime.now(timezone.utc) - timedelta(days=days)
+            if days and days > 0 else None
+        )
     )
     if client is not None:
         try:
             return await _fetch_reviews_on_client(
-                key, limit=limit, cutoff=cutoff, session=client
+                key, limit=limit, cutoff=cutoff, session=client,
+                full_history=full_history,
             )
         except net.Blocked as exc:
             raise BoqError(str(exc), exc.status_code) from exc
@@ -370,7 +381,8 @@ async def fetch_reviews(
         async with net.client_for(route, timeout=REQUEST_TIMEOUT_SECONDS) as session:
             try:
                 reviews = await _fetch_reviews_on_client(
-                    key, limit=limit, cutoff=cutoff, session=session
+                    key, limit=limit, cutoff=cutoff, session=session,
+                    full_history=full_history,
                 )
             except net.Blocked as exc:
                 net.note_result(route, ok=False)
@@ -388,6 +400,7 @@ async def reviews_for_place(
     maps_url: str | None = None,
     max_reviews: int = DEFAULT_MAX_REVIEWS,
     days: int | None = DEFAULT_REVIEW_WINDOW_DAYS,
+    full_history: bool = False,
 ) -> list[dict[str, Any]]:
     """Reviews for a saved place, using its canonical Maps URL for identity.
 
@@ -398,7 +411,9 @@ async def reviews_for_place(
     if not feature:
         logger.debug("No BOQ feature id for place %s", place_id)
         return []
-    return await fetch_reviews(feature, max_reviews=max_reviews, days=days)
+    return await fetch_reviews(
+        feature, max_reviews=max_reviews, days=days, full_history=full_history
+    )
 
 
 async def get_place(
@@ -408,6 +423,7 @@ async def get_place(
     cutoff: Any = None,
     maps_url: str | None = None,
     days: int | None = DEFAULT_REVIEW_WINDOW_DAYS,
+    full_history: bool = False,
 ) -> dict[str, Any]:
     """Fetch one place's public facts and recent reviews.
 
@@ -435,7 +451,8 @@ async def get_place(
     details["reviews"] = []
     if reviews_limit != 0 and bool(getattr(settings, "BOQ_REVIEWS_ENABLED", True)):
         details["reviews"] = await fetch_reviews(
-            feature, max_reviews=reviews_limit, days=days
+            feature, max_reviews=reviews_limit, days=days,
+            full_history=full_history,
         )
     details["source"] = "boq"
     return details

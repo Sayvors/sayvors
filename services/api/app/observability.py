@@ -32,6 +32,10 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
+# Sentry 3 removed the legacy transaction-profiling option. Keep one init path
+# that works with both the 2.x deployments and 3.x CI resolution.
+_SENTRY_MAJOR = int(str(getattr(sentry_sdk, "VERSION", "0")).split(".", 1)[0] or 0)
+
 # Service name -> environment suffix reported to GlitchTip. Keeping the service
 # in the environment lets you filter `api` vs `worker` issues in the UI without
 # polluting release tracking.
@@ -166,17 +170,19 @@ def init_observability(service: str = DEFAULT_SERVICE) -> bool:
         return True
 
     try:
-        sentry_sdk.init(
-            dsn=dsn,
-            environment=build_environment(service),
-            release=build_release(),
-            traces_sample_rate=0.1,
-            profiles_sample_rate=0.1,
+        options: dict[str, Any] = {
+            "dsn": dsn,
+            "environment": build_environment(service),
+            "release": build_release(),
+            "traces_sample_rate": 0.1,
             # No user emails/IPs by default. Opt in explicitly if ever needed.
-            send_default_pii=False,
-            before_send=_before_send,
-            before_send_transaction=_before_send_transaction,
-        )
+            "send_default_pii": False,
+            "before_send": _before_send,
+            "before_send_transaction": _before_send_transaction,
+        }
+        if _SENTRY_MAJOR < 3:
+            options["profiles_sample_rate"] = 0.1
+        sentry_sdk.init(**options)
         _configured = True
         logger.info(
             "GlitchTip initialised: service=%s environment=%s release=%s",

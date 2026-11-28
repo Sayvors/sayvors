@@ -47,8 +47,8 @@ TICKS_PER_HOUR = 3600 // TICK_SECONDS
 # Places call at 10 and sources the remainder from BOQ. Outscraper stays bounded
 # because it bills per review.
 PROVIDER_REVIEWS_LIMIT = {
-    "google_places": 500,
-    "boq": 500,
+    "google_places": 250,
+    "boq": 250,
     "outscraper": 10,
 }
 
@@ -167,7 +167,16 @@ async def refresh_due_places(
             return {"scraped": 0, "failed": 0, "pruned": 0, "reason": "scraping disabled"}
 
         source = str(getattr(config, "source", "") or "").strip()
-        reviews_limit = PROVIDER_REVIEWS_LIMIT.get(source, 500)
+        full_history = str(getattr(config, "review_history_mode", "recent")) == "full"
+        if full_history:
+            # One deep place per pass keeps a 22k-review listing from occupying
+            # the shared worker; admin ceiling stays reachable over later ticks.
+            limit = min(limit, max(1, int(config.full_history_batch)))
+            reviews_limit = min(
+                max(10, int(config.max_reviews_per_place)), boq.MAX_REVIEWS_FULL
+            )
+        else:
+            reviews_limit = PROVIDER_REVIEWS_LIMIT.get(source, 250)
         # Official Places supplies facts; BOQ supplies deep reviews and is the
         # complete fallback. A row without a canonical Maps feature id can only
         # be refreshed when a non-BOQ primary can answer on its own.
@@ -204,6 +213,7 @@ async def refresh_due_places(
                     reviews_limit=reviews_limit,
                     maps_url=maps_url,
                     cutoff=cutoff_ts,
+                    full_history=full_history,
                 )
             except (places.PlacesError, boq.BoqError, outscraper.OutscraperError) as exc:
                 if getattr(exc, "status_code", None) == 503:

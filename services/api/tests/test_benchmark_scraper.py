@@ -52,7 +52,7 @@ async def test_worker_uses_provider_strategy_for_official_source(db, monkeypatch
 
     assert result["scraped"] == 1
     assert called["source"] == "google_places"
-    assert called["reviews_limit"] == 500
+    assert called["reviews_limit"] == 250
     assert called["maps_url"] == MAPS_URL
 
 
@@ -75,7 +75,7 @@ async def test_unconfigured_provider_falls_back_to_the_free_provider(db, monkeyp
 
     assert result["scraped"] == 1
     assert called["maps_url"] == MAPS_URL
-    assert called["reviews_limit"] == 500
+    assert called["reviews_limit"] == 250
     assert called["days"] is None
     await db.refresh(row)
     assert row.rating == 4.5

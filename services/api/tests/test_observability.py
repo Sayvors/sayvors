@@ -131,6 +131,22 @@ def test_default_httpx_integration_cannot_capture_debug_token_query(sentry_defau
     assert "fake-input-token" not in payload
 
 
+def test_init_omits_profiles_option_on_sentry_v3(monkeypatch):
+    captured = {}
+
+    def fake_init(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(observability.settings, "GLITCHTIP_DSN", "https://public@example.com/1")
+    monkeypatch.setattr(observability, "_configured", False)
+    monkeypatch.setattr(observability, "_SENTRY_MAJOR", 3)
+    monkeypatch.setattr(sentry_sdk, "init", fake_init)
+
+    assert observability.init_observability("test") is True
+    assert "profiles_sample_rate" not in captured
+    assert captured["traces_sample_rate"] == 0.1
+
+
 def test_sentry_error_canary_strips_oauth_url_queries(sentry_canary):
     with sentry_sdk.new_scope() as scope:
         scope.set_context("provider", {

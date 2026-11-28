@@ -29,7 +29,7 @@ def _boq_payload() -> dict:
         "name": "Free Cafe",
         "rating": 4.1,
         "review_count": 99,
-        "reviews": [{"rating": i % 5 + 1, "text": f"deep-{i}"} for i in range(500)],
+        "reviews": [{"rating": i % 5 + 1, "text": f"deep-{i}"} for i in range(250)],
         "thumbnail": "https://lh3.googleusercontent.com/cover",
         "maps_url": MAPS_URL,
     }
@@ -55,15 +55,15 @@ async def test_places_facts_keep_boq_deep_reviews(monkeypatch):
     monkeypatch.setattr(boq, "get_place", boq_get)
 
     result = await provider.get_details(
-        "google_places", "places/1", reviews_limit=500, maps_url=MAPS_URL
+        "google_places", "places/1", reviews_limit=250, maps_url=MAPS_URL
     )
 
     assert called["places"]["reviews_limit"] == 10
-    assert called["boq"]["reviews_limit"] == 500
+    assert called["boq"]["reviews_limit"] == 250
     assert called["boq"]["maps_url"] == MAPS_URL
     assert result["rating"] == 4.4
     assert result["review_count"] == 100
-    assert len(result["reviews"]) == 500
+    assert len(result["reviews"]) == 250
     assert result["thumbnail"] == "https://lh3.googleusercontent.com/cover"
     assert result["reviews_source"] == "boq"
 
@@ -79,7 +79,7 @@ async def test_places_failure_falls_back_to_boq(monkeypatch):
     monkeypatch.setattr(boq, "get_place", boq_get)
 
     result = await provider.get_details(
-        "google_places", "places/1", reviews_limit=500, maps_url=MAPS_URL
+        "google_places", "places/1", reviews_limit=250, maps_url=MAPS_URL
     )
 
     assert result["name"] == "Free Cafe"
@@ -100,7 +100,7 @@ async def test_unconfigured_places_uses_boq_without_calling_places(monkeypatch):
     monkeypatch.setattr(boq, "get_place", boq_get)
 
     result = await provider.get_details(
-        "google_places", "places/1", reviews_limit=500, maps_url=MAPS_URL
+        "google_places", "places/1", reviews_limit=250, maps_url=MAPS_URL
     )
 
     assert result["name"] == "Free Cafe"
@@ -117,7 +117,7 @@ async def test_places_without_feature_id_skips_boq_deep_reviews(monkeypatch):
     monkeypatch.setattr(boq, "get_place", boq_get)
 
     result = await provider.get_details(
-        "google_places", "places/1", reviews_limit=500, maps_url=None
+        "google_places", "places/1", reviews_limit=250, maps_url=None
     )
 
     assert result["rating"] == 4.4

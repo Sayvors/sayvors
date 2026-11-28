@@ -42,6 +42,23 @@ Use licensed residential/mobile proxies if blocking becomes frequent. Datacenter
 IPs are usually blocked quickly. Proxies reduce blocks; they do not change
 Google's terms or make an undocumented endpoint reliable.
 
+## Full-history review rating (opt-in)
+
+Admin `PUT /api/v1/admin/benchmark/config` controls:
+
+- `review_history_mode`: `recent` (default, 30-day sample) or `full`.
+- `max_reviews_per_place`: hard ceiling, 10–20,000 (default 2,000).
+- `full_history_batch`: places per worker pass, 1–10 (default 1).
+
+`boq.MAX_PAGES_FULL` allows the deeper paging but `MAX_REVIEWS_FULL = 20,000`
+remains an absolute ceiling. One place per pass by default stops a 22k-review
+listing from occupying the shared worker.
+
+Theme analysis uses all cached reviews in full mode (up to the config ceiling),
+but the LLM still sees only the first 50 reviews. Above that, the deterministic
+local extractor owns counts and the analysis source is `local_full_history`, so
+large samples are never sent to a model prompt.
+
 ## Production configuration
 
 - Set `GOOGLE_PLACES_API_KEY` for authoritative facts and a stable 10-review

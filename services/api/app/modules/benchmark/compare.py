@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 MAX_SUBJECTS = 6
 # Newest-first sample of a saved place's reviews for the reviews table.
-REVIEW_SAMPLE_LIMIT = 500
+REVIEW_SAMPLE_LIMIT = 250
 # How many reviews each subject returns for the reviews table.
 MAX_REVIEWS_PER_SUBJECT = 50
 REVIEW_TEXT_MAX = 600
@@ -41,8 +41,8 @@ REVIEW_TEXT_MAX = 600
 # others ask for the same facts restricted to a window, computed from the
 # scraper's snapshot history plus the current live values.
 RANGES: dict[str, int | None] = {"live": None, "30d": 30, "90d": 90, "365d": 365}
-# Google returns at most 500 reviews per place; keep our own sample the same
-# size so both sides of the comparison describe the same kind of evidence.
+# Provider samples are bounded; keep our own sample the same size so both sides
+# of the comparison describe the same kind of evidence.
 WINDOW_DAYS = {
     "reviews_last_day": 1,
     "reviews_last_week": 7,
@@ -406,7 +406,7 @@ async def _saved_subject(db: AsyncSession, tenant_id: str, raw: str,
         try:
             details = await _provider_details(
                 source, saved.place_id,
-                reviews_limit=500, maps_url=saved.maps_url, cutoff=cutoff_ts,
+                reviews_limit=250, maps_url=saved.maps_url, cutoff=cutoff_ts,
             )
         except (places.PlacesError, boq.BoqError, outscraper.OutscraperError) as exc:
             logger.warning(

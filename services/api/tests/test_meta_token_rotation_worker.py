@@ -331,13 +331,18 @@ async def test_worker_caps_concurrent_meta_calls(db, monkeypatch):
         await _seed(db, f"concurrent-{index}")
     active = 0
     peak = 0
+    release = asyncio.Event()
 
     async def fake_process(connection_id, *, adapter, now, semaphore, session_factory):
         nonlocal active, peak
         async with semaphore:
             active += 1
             peak = max(peak, active)
-            await asyncio.sleep(0.01)
+            if active >= 5:
+                release.set()
+            # Deterministic barrier: all five slots must be usable at once.
+            # A broken semaphore times out here instead of flaking on timing.
+            await asyncio.wait_for(release.wait(), timeout=2)
             active -= 1
         return True
 

@@ -5,6 +5,7 @@ GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
 from datetime import datetime, timezone
+from typing import Literal
 
 import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
@@ -316,6 +317,9 @@ class BenchmarkConfigIn(BaseModel):
     retention_days: int | None = Field(default=None, ge=7, le=3650)
     max_saved_places: int | None = Field(default=None, ge=1, le=500)
     place_cache_enabled: bool | None = None
+    review_history_mode: Literal["recent", "full"] | None = None
+    max_reviews_per_place: int | None = Field(default=None, ge=10, le=20_000)
+    full_history_batch: int | None = Field(default=None, ge=1, le=10)
 
 
 class PlatformConfigIn(BaseModel):
