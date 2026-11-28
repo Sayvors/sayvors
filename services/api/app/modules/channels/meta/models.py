@@ -24,6 +24,10 @@ class MetaConnection(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "provider", name="uq_meta_connections_tenant_provider"),
         Index("ix_meta_connections_tenant", "tenant_id"),
+        Index(
+            "ix_meta_connections_token_rotation_due",
+            "provider", "status", "token_expires_at",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -36,6 +40,13 @@ class MetaConnection(Base):
     meta_business_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     access_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    data_access_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_last_rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_rotation_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    token_rotation_error: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    token_rotation_next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_rotation_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[list] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(
         Enum("active", "needs_reauth", "expired", "revoked", "error", name="meta_connection_status"),
