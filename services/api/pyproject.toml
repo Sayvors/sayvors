@@ -13,6 +13,8 @@ dependencies = [
     "alembic>=1.14",
     "pydantic-settings>=2.0",
     "email-validator>=2.2",
+    # Security floor for the DNS decoder pulled by email-validator.
+    "dnspython>=2.9.2",
     "pyjwt>=2.10",
     "bcrypt>=4.2",
     "openai>=1.60",
@@ -29,10 +31,14 @@ dependencies = [
     "trafilatura>=2.0",
     "ollama>=0.4",
     "cryptography>=43.0",
+    # Security floor for the ASN.1 decoder used by pyasn1-modules.
+    "pyasn1>=0.6.5",
     "aiomysql>=0.2",
     "google-cloud-storage>=2.0",
+    # Security floor for the OpenTelemetry API pulled by Google clients.
+    "opentelemetry-api>=1.45.2",
     "edge-tts>=6.1",
-    "Pillow>=10.0",
+    "Pillow>=13.0.0",
     "boto3>=1.35",
     "phonenumbers>=9.0",
     "Babel>=2.15",
@@ -53,7 +59,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "aiosqlite>=0.20",
     # Parallel test execution for the full suite (CI and local). Scoped runs
-    # can override the default with `-n 0` when worker startup would dominate.
+    # still use xdist; do not override with `-n 0`.
     "pytest-xdist>=3.8",
 ]
 
@@ -69,6 +75,6 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 # The full suite is ~2k tests and dominated by per-test imports/fixtures.
 # `loadscope` keeps a module on one worker, which avoids module-global and
-# Redis cross-talk while still filling every available CPU. Use `-n 0` for a
-# single test/file, where worker startup costs more than the test itself.
+# Redis cross-talk while still filling every available CPU. Always keep xdist
+# enabled, including scoped single-file runs.
 addopts = "-ra -n auto --dist loadscope"
