@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import Modal from "./Modal";
 
 function NestedModals({ busy = false }: { busy?: boolean }) {
@@ -37,6 +38,26 @@ function NestedModals({ busy = false }: { busy?: boolean }) {
 }
 
 describe("Modal", () => {
+  it("includes native evidence summaries in keyboard focus order", async () => {
+    const user = userEvent.setup();
+    render(
+      <Modal open onClose={vi.fn()} title="Decision brief">
+        <details open>
+          <summary>Evidence</summary>
+          <button type="button">Evidence action</button>
+        </details>
+      </Modal>,
+    );
+    const close = screen.getByRole("button", { name: "Close" });
+    const summary = screen.getByText("Evidence");
+    expect(close).toHaveFocus();
+
+    await user.tab();
+    expect(summary).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(close).toHaveFocus();
+  });
+
   it("keeps nested focus and scroll locks scoped to the topmost dialog", () => {
     const initialOverflow = document.body.style.overflow;
     const { rerender } = render(<NestedModals />);

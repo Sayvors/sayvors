@@ -34,6 +34,20 @@ describe("QuestionResults", () => {
     expect(onSelect).toHaveBeenCalledWith("run1");
   });
 
+  it("shows the branch label retained with an aggregated question", () => {
+    const aggregatedQuestion = { ...question, channel_label: "Makkah Branch" };
+    render(
+      <QuestionResults
+        questions={[aggregatedQuestion]}
+        selectedRunId={null}
+        onSelect={vi.fn()}
+        copy={en.aiVisibility}
+      />,
+    );
+
+    expect(screen.getByText("Makkah Branch")).toBeInTheDocument();
+  });
+
   it("disables questions that have no run yet", () => {
     render(
       <QuestionResults

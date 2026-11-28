@@ -55,6 +55,12 @@ export default function QuestionResults({
                   </span>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[var(--ai-muted)]">
+                  {question.channel_label && (
+                    <>
+                      <span className="font-semibold text-[var(--ai-ink-2)]">{question.channel_label}</span>
+                      <span aria-hidden="true">·</span>
+                    </>
+                  )}
                   <span>{intentLabel(question.customer_intent)}</span>
                   <span aria-hidden="true">·</span>
                   <span>{stage}</span>

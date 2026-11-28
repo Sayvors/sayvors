@@ -241,6 +241,7 @@ const en = {
     viewBranch: "View branch",
     branchResults: "Branch results",
     noBranchResults: "No connected branch has completed research yet.",
+    someLocationsLoadError: "Some locations could not be loaded. Results are incomplete.",
     range: "Date range",
     range30: "30 days",
     range90: "90 days",

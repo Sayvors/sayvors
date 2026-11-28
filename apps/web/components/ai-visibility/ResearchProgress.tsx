@@ -58,7 +58,7 @@ export default function ResearchProgress({
     <div className="space-y-2" role="status" aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold text-[var(--ai-ink-2)]">
         <span>{step}</span>
-        <span className="font-mono text-[10px] text-[var(--ai-muted)]">
+        <span aria-hidden="true" className="font-mono text-[10px] text-[var(--ai-muted)]">
           {typeof measuredElapsed === "number" ? `${measuredElapsed}s` : ""}
         </span>
       </div>

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useGoogleChannels } from "@/components/analytics/Controls";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { Dict } from "@/lib/i18n/en";
 import { queryKeys } from "@/lib/query-keys";
 import {
   fetchLatestQuerySet,
@@ -27,7 +28,18 @@ const ACTIVE_QUERY_SET_STATUSES = new Set(["generating", "running"]);
 type BranchResult = {
   channel: { id: string; label: string };
   data: AiVisibilityQuerySetLatest | null;
+  error: Error | null;
 };
+
+function isQuerySetNotFound(error: unknown) {
+  return error instanceof Error && error.message.includes("query_set_not_found");
+}
+
+function querySetStatusLabel(status: string, copy: Dict["aiVisibility"]) {
+  if (status === "generating" || status === "running") return copy.running;
+  if (status === "partial") return copy.researchPartial;
+  return copy.stages[status as keyof typeof copy.stages] ?? status;
+}
 
 function summaryData(data: AiVisibilityQuerySetLatest) {
   const completed = data.questions.filter(
@@ -59,7 +71,9 @@ function aggregateResults(rows: BranchResult[]) {
           0,
         ) / completedRuns
       : null;
-  const questions = items.flatMap((row) => row.data.questions);
+  const questions = items.flatMap((row) =>
+    row.data.questions.map((question) => ({ ...question, channel_label: row.channel.label })),
+  );
   const completed = questions.filter(
     (row) => row.status === "completed" || row.status === "insufficient_evidence",
   ).length;
@@ -125,10 +139,17 @@ export default function AiVisibilityPage() {
     queryFn: async () => {
       if (isAll) {
         return Promise.all(
-          channels.map(async (channel) => ({
-            channel,
-            data: await fetchLatestQuerySet(channel.id).catch(() => null),
-          })),
+          channels.map(async (channel) => {
+            try {
+              return { channel, data: await fetchLatestQuerySet(channel.id), error: null };
+            } catch (error) {
+              return {
+                channel,
+                data: null,
+                error: error instanceof Error ? error : new Error(String(error)),
+              };
+            }
+          }),
         );
       }
       return fetchLatestQuerySet(channelId!);
@@ -154,6 +175,15 @@ export default function AiVisibilityPage() {
     () => aggregateResults(Array.isArray(latest.data) ? latest.data : []),
     [latest.data],
   );
+  const branchResults = Array.isArray(latest.data) ? latest.data : [];
+  const aggregateLoadErrors = isAll
+    ? branchResults.filter((row) => row.error !== null && !isQuerySetNotFound(row.error))
+    : [];
+  const allOnlyNotFound =
+    isAll &&
+    branchResults.length > 0 &&
+    aggregate.items.length === 0 &&
+    branchResults.every((row) => isQuerySetNotFound(row.error));
 
   if (!channelId) {
     return (
@@ -187,11 +217,7 @@ export default function AiVisibilityPage() {
       setStarting(false);
     }
   };
-  const notFound =
-    !isAll &&
-    latest.isError &&
-    latest.error instanceof Error &&
-    latest.error.message.includes("query_set_not_found");
+  const notFound = !isAll && latest.isError && isQuerySetNotFound(latest.error);
   const branchData =
     !isAll &&
     latest.data &&
@@ -208,6 +234,9 @@ export default function AiVisibilityPage() {
     : [];
   const visibleQuestions = isAll ? aggregate.questions : branchData?.questions ?? [];
   const selectedQuestion = visibleQuestions.find((question) => question.run_id === selectedRunId);
+  const selectedQuestionSubtitle = selectedQuestion?.channel_label
+    ? `${selectedQuestion.channel_label} · ${selectedQuestion.question_text}`
+    : selectedQuestion?.question_text;
 
   return (
     <div className="ai-visibility-ui h-full space-y-5 overflow-y-auto overscroll-contain p-4 sm:p-6 lg:p-8">
@@ -266,7 +295,18 @@ export default function AiVisibilityPage() {
         </p>
       )}
 
-      {latest.isPending && !branchData && !isAll ? (
+      {isAll && !latest.isPending && aggregateLoadErrors.length > 0 && (
+        <div className="ai-panel p-5" role="alert">
+          <p className="text-[13px] font-semibold text-[var(--ai-danger)]">
+            {aggregate.items.length > 0 ? copy.someLocationsLoadError : copy.loadError}
+          </p>
+          <button type="button" onClick={() => void latest.refetch()} className="mt-2 text-[12px] font-bold underline">
+            {copy.retry}
+          </button>
+        </div>
+      )}
+
+      {latest.isPending && !branchData ? (
         <div className="ai-panel space-y-3 p-6" role="status" aria-label={copy.loading}>
           <div className="ai-skeleton h-4 w-40" />
           <div className="ai-skeleton h-24 w-full" />
@@ -299,7 +339,7 @@ export default function AiVisibilityPage() {
                     <div>
                       <p className="text-[13px] font-bold text-[var(--ai-ink)]">{channel.label}</p>
                       <p className="mt-1 text-[10px] text-[var(--ai-muted)]">
-                        {copy.version} {data.query_set.version} · {data.query_set.status}
+                        {copy.version} {data.query_set.version} · {querySetStatusLabel(data.query_set.status, copy)}
                       </p>
                     </div>
                     <button
@@ -333,12 +373,12 @@ export default function AiVisibilityPage() {
               hint={copy.allQuestionsHint}
             />
           </section>
-        ) : (
+        ) : allOnlyNotFound ? (
           <section className="ai-panel p-6">
             <p className="ai-eyebrow">{copy.noResearchYet}</p>
             <p className="mt-2 text-[13px] text-[var(--ai-muted)]">{copy.noBranchResults}</p>
           </section>
-        )
+        ) : null
       ) : branchData ? (
         <>
           <ResearchStatus
@@ -393,7 +433,7 @@ export default function AiVisibilityPage() {
         open={selectedRunId !== null}
         onClose={() => setSelectedRunId(null)}
         title={copy.decisionBrief}
-        subtitle={selectedQuestion?.question_text}
+        subtitle={selectedQuestionSubtitle}
         width="max-w-[920px]"
         closeLabel={copy.close}
       >

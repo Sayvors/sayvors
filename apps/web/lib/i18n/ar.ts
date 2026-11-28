@@ -243,6 +243,7 @@ const ar: Dict = {
     viewBranch: "عرض الفرع",
     branchResults: "نتائج الفروع",
     noBranchResults: "لم يكتمل بحث لأي فرع متصل بعد.",
+    someLocationsLoadError: "تعذر تحميل بعض المواقع. النتائج غير مكتملة.",
     range: "الفترة الزمنية",
     range30: "٣٠ يومًا",
     range90: "٩٠ يومًا",
