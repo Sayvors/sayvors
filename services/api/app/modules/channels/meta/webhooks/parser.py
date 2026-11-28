@@ -120,6 +120,14 @@ def _parse_whatsapp(payload: dict) -> list[dict]:
                             "to": st.get("recipient_id"),
                             "status": status,
                             "errors": st.get("errors"),
+                            # Pricing evidence is operational data, not just
+                            # raw-payload retention: sent status reconciles
+                            # provider-confirmed outbound usage.
+                            "billable": st.get("billable"),
+                            "pricing_model": st.get("pricing_model"),
+                            "pricing_category": st.get("pricing_category"),
+                            "pricing_type": st.get("pricing_type"),
+                            "pricing_subtype": st.get("pricing_subtype"),
                         },
                     }
                 )

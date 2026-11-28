@@ -27,6 +27,7 @@ from .modules.channels.publish.router import router as publish_router
 from .modules.catalog.router import router as catalog_router
 from .modules.whatsapp_templates.router import router as templates_router
 from .modules.channels.meta.router import router as meta_router
+from .modules.channels.meta import spend_models as _spend_models  # noqa: F401
 from .modules.channels.meta.webhooks.router import router as meta_webhooks_router
 from .modules.redis.router import router as redis_router
 from .modules.kafka.router import router as kafka_router

@@ -3184,11 +3184,11 @@ async def _handle_message_status(event: dict, data: dict) -> None:
     """Mirror Cloud API delivery/read/failure states onto outbound rows."""
     from datetime import datetime, timezone
 
-    from ..models import ChannelMessage
+    from ..models import Channel, ChannelMessage
 
     provider_msg_id = event.get("external_event_id") or ""
     status = data.get("status") or ""
-    if not provider_msg_id or status not in ("delivered", "read", "failed"):
+    if not provider_msg_id or status not in ("sent", "delivered", "read", "failed"):
         return
     now = datetime.now(timezone.utc)
     async with async_session() as db:
@@ -3206,8 +3206,30 @@ async def _handle_message_status(event: dict, data: dict) -> None:
             # Read is terminal; a redelivered/out-of-order "delivered" is not
             # news and must not move the recorded time.
             return
-        if row.status == "failed" and status != "failed":
+        if row.status == "failed" and status not in ("failed", "sent"):
             return
+        # Retain structured pricing evidence from status webhooks. Raw payload
+        # retention alone cannot reconcile billability or provider confirmation.
+        for field in (
+            "billable", "pricing_model", "pricing_category",
+            "pricing_type", "pricing_subtype",
+        ):
+            value = data.get(field)
+            if value is not None:
+                setattr(row, f"pricing_{field}" if field == "billable" else field, value)
+        if status == "sent":
+            if row.provider_confirmed_at is None:
+                row.provider_confirmed_at = now
+            if row.status == "failed":
+                row.status = "sent"
+                row.error = None
+            from .quota import reconcile_provider_sent
+
+            channel = await db.get(Channel, row.channel_id)
+            if channel is not None and channel.platform == "whatsapp":
+                await reconcile_provider_sent(
+                    db, channel.user_id, channel.platform_user_id, provider_msg_id
+                )
         # Keep the first time each transition was observed: webhooks can be
         # redelivered out of order, and a later duplicate must not move the
         # timestamp forward.
