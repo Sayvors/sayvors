@@ -95,6 +95,15 @@ async def test_due_selection_uses_earlier_data_access_deadline(db):
     assert ids == ["data-access-due"]
 
 
+async def test_unknown_expiry_is_due_for_non_system_but_not_system_tokens(db):
+    await _seed(db, "page-unknown-expiry", kind="PAGE", expires_at=None,
+                last_rotated_at=None)
+    await _seed(db, "system-unknown-expiry", kind="SYSTEM_USER", expires_at=None,
+                last_rotated_at=None)
+    ids = await select_due_connection_ids(db, now=NOW)
+    assert ids == ["page-unknown-expiry"]
+
+
 async def test_successful_rotation_encrypts_token_and_clears_error(db):
     conn = await _seed(db, "rotate-me")
     conn.token_rotation_error = "exchange_transient"

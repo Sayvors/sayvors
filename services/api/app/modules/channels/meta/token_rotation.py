@@ -192,7 +192,8 @@ def _due_conditions(now: datetime):
         user & MetaConnection.token_last_rotated_at.is_(None),
         user & (deadline <= horizon),
         user & deadline.is_(None),
-        ~user & (deadline <= horizon),
+        ~user & MetaConnection.token_kind.not_in(["SYSTEM_USER", "BUSINESS_INTEGRATION_SYSTEM_USER"])
+        & ((deadline <= horizon) | deadline.is_(None)),
     )
     return [
         MetaConnection.provider == "whatsapp",
