@@ -6,7 +6,7 @@ Scope: WhatsApp Meta connections only
 
 ## Goal
 
-Rotate WhatsApp business access tokens before expiry so merchants do not repeat the WhatsApp connection journey. Detect revoked or permanently rejected tokens early, fail closed for new sends, preserve inbound webhooks and history, and alert the tenant and platform operators.
+Rotate supported expiring WhatsApp tokens before expiry, classify non-expiring Business Integration System User tokens as healthy, detect revoked or permanently rejected tokens early, fail closed for new sends, preserve inbound webhooks and history, and alert the tenant and platform operators.
 
 ## Current gap
 
@@ -26,18 +26,22 @@ Rotate WhatsApp business access tokens before expiry so merchants do not repeat 
 
 ### 1. Capture and normalize credentials
 
-The WhatsApp adapter exchanges the Embedded Signup code, then exchanges the returned token for a long-lived token through Meta's `oauth/access_token` endpoint using `grant_type=fb_exchange_token`.
+The WhatsApp adapter preserves the complete Embedded Signup exchange response, inspects token type/expiry with `/debug_token` using an app access token when needed, and only applies `grant_type=fb_exchange_token` to supported expiring User tokens. Business Integration System User tokens are designed to avoid routine re-authentication; confirmed non-expiring tokens are marked healthy and skipped rather than assigned a fabricated expiry.
 
-- Preserve `expires_in` when Meta returns it.
-- Store `token_expires_at` as a UTC timestamp.
-- If Meta omits expiry on a long-lived exchange, use a documented 60-day fallback and keep the token eligible for early rotation.
+- Preserve `expires_in` and `data_access_expires_at` when Meta returns them.
+- Store `token_expires_at` as a UTC timestamp only when expiry is known.
+- If a supported User-token long-lived exchange omits expiry, use a documented 60-day fallback and keep the token eligible for early rotation.
+- Never invent expiry for Business Integration System User or other non-expiring token types.
 - Never log or persist the plaintext token outside the existing encrypted column.
 
 ### 2. Durable rotation state
 
 Add to `MetaConnection`:
 
-- `token_last_rotated_at`: last successful long-lived exchange.
+- `token_kind`: coarse safe classification (`USER`, `SYSTEM_USER`, `BUSINESS_INTEGRATION_SYSTEM_USER`, `UNKNOWN`).
+- `data_access_expires_at`: optional Meta-reported data-access expiry.
+- `token_last_rotated_at`: last successful supported rotation.
+- `token_rotation_lease_until`: short worker claim lease; never hold a DB row lock during HTTP.
 - `token_rotation_attempts`: consecutive failed rotation attempts.
 - `token_rotation_error`: bounded safe error code, never raw provider text or token fragments.
 
@@ -59,13 +63,14 @@ Selection rules:
 Execution rules:
 
 - Bounded batch of 100 connections per pass.
-- Bounded concurrency of five token exchanges.
-- Lock one connection row, recheck due state, then perform the exchange.
-- On success, encrypt and store the new token, expiry, last-rotation timestamp, clear error state, restore `active`, and reset attempts.
+- Bounded concurrency of five token inspections/exchanges.
+- Claim a connection with a short lease, release the transaction before the Meta HTTP call, then compare-and-swap the result so concurrent workers cannot double-rotate.
+- Confirmed non-expiring tokens are validated and skipped without a fake expiry or rotation call.
+- On success, encrypt and store the new token when one was issued, update known expiry/kind, clear error state, restore `active`, and reset attempts.
 - On transient transport, 429, or 5xx failures, keep the old token, record a safe error code, apply exponential backoff, and retry in a later pass.
 - On permanent 400/401/403 rejection, mark `needs_reauth`, block new sends, and emit alerts.
 
-The row lock is held only for one connection; no global lock or unbounded fan-out is introduced.
+The row lock is held only long enough to claim or persist one connection; no global lock, network call under lock, or unbounded fan-out is introduced.
 
 ### 4. Connect-time rotation
 
