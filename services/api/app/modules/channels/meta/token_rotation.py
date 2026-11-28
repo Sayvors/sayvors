@@ -358,7 +358,9 @@ async def _process_connection(connection_id: str, *, session_factory, adapter,
             )
             if should_exchange:
                 payload = await adapter.exchange_long_lived_token(token)
-                rotated = parse_exchange_payload(payload, now=now, allow_user_fallback=True)
+                rotated = parse_exchange_payload(
+                    {**payload, "token_kind": "USER"}, now=now, allow_user_fallback=True,
+                )
                 info = TokenInfo(
                     token_kind="USER", expires_at=rotated.expires_at,
                     data_access_expires_at=rotated.data_access_expires_at,
@@ -543,7 +545,7 @@ async def prepare_whatsapp_credentials(adapter, credentials: dict,
         try:
             exchanged = await adapter.exchange_long_lived_token(token)
             rotated = parse_exchange_payload(
-                exchanged, now=now, allow_user_fallback=True,
+                {**exchanged, "token_kind": "USER"}, now=now, allow_user_fallback=True,
             )
         except TokenMetadataError:
             fallback = info if info.effective_expires_at else original

@@ -292,3 +292,34 @@ async def test_store_connection_never_persists_plaintext_nested_tokens(db):
     assert "nested-app-secret" not in metadata
     assert conn.connection_metadata["extension"]["safe_value"] == "preserved"
     assert decrypt_credential(conn.access_token_encrypted) == "top-secret-token"
+
+
+@pytest.mark.asyncio
+async def test_connect_user_exchange_without_expiry_uses_user_only_fallback(
+    client, db, user_id, monkeypatch,
+):
+    from unittest.mock import AsyncMock
+    from sqlalchemy import select
+    from app.modules.channels.meta import oauth, service
+    from app.modules.channels.meta.models import MetaConnection
+    from app.modules.channels.meta.token_rotation import TokenInfo
+
+    state, _ = await oauth.create_transaction(db, user_id, "whatsapp")
+    adapter = AsyncMock()
+    adapter.exchange_code.return_value = {"access_token": "short-user-token"}
+    adapter.inspect_token.return_value = TokenInfo(token_kind="USER", is_valid=True, app_id="app-1")
+    adapter.exchange_long_lived_token.return_value = {"access_token": "long-user-token"}
+    adapter.discover_assets.return_value = []
+    monkeypatch.setattr(service, "get_adapter", lambda _provider: adapter)
+    monkeypatch.setattr("app.modules.channels.meta.providers.whatsapp.settings.META_APP_ID", "app-1")
+    before = datetime.now(timezone.utc)
+    response = client.post(
+        "/api/v1/meta/whatsapp/session",
+        json={"state": state, "code": "code-1", "waba_id": "waba-1"},
+        headers={"host": "localhost"},
+    )
+    assert response.status_code == 200, response.text
+    conn = (await db.execute(select(MetaConnection))).scalar_one()
+    assert conn.token_expires_at is not None
+    assert 59 <= (conn.token_expires_at.replace(tzinfo=timezone.utc) - before).days <= 60
+    assert conn.connection_metadata["token_expiry_source"] == "user_exchange_fallback_60d"
