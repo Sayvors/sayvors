@@ -1,14 +1,13 @@
 name: CI
 
 on:
-  # CI is the gate for staging PRs only. Development pushes intentionally do
-  # not burn Actions minutes; every change is checked when it is proposed for
-  # staging.
-  pull_request:
+  # Actions run only after a merge to staging. Development pushes and PRs
+  # intentionally start nothing.
+  push:
     branches: [staging]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
