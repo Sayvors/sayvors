@@ -1,9 +1,10 @@
-"""Scheduled benchmark collector: public Google endpoints, no browser sidecar.
+"""Scheduled benchmark collector: official Places facts, BOQ deep reviews.
 
-Search uses ``mapsearch``. Place facts use ``placedetail``. Deep reviews use
-``boq``. The worker is provider-shaped so a configured Google Places or
-Outscraper account can still be used explicitly, but the free Google provider
-is always available when no such account exists.
+Search uses ``mapsearch`` (the canonical Maps URL/feature ID). Place facts and
+a bounded review sample use Google Places (New) when a key is configured;
+``boq`` supplies deep recent reviews and is the complete fallback when Places
+is unavailable. ``benchmark/provider.py`` owns that order, so the worker and
+read handlers cannot drift.
 
 Admin owns the cadence. `BenchmarkConfig` carries it:
 
@@ -27,7 +28,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import async_session
-from . import boq, outscraper, places, service
+from . import boq, outscraper, places, provider, service
 from .models import BenchmarkPlace, BenchmarkSnapshot
 
 logger = logging.getLogger(__name__)
@@ -42,10 +43,11 @@ CALL_PACING_SECONDS = 0.25
 MAX_ERROR_LEN = 300
 TICKS_PER_HOUR = 3600 // TICK_SECONDS
 
-# Per-provider review depth. The free provider returns real history; Places
-# and Outscraper remain bounded because they can bill per review.
+# The worker asks for deep history; provider.get_details caps the official
+# Places call at 10 and sources the remainder from BOQ. Outscraper stays bounded
+# because it bills per review.
 PROVIDER_REVIEWS_LIMIT = {
-    "google_places": 10,
+    "google_places": 500,
     "boq": 500,
     "outscraper": 10,
 }
@@ -165,22 +167,17 @@ async def refresh_due_places(
             return {"scraped": 0, "failed": 0, "pruned": 0, "reason": "scraping disabled"}
 
         source = str(getattr(config, "source", "") or "").strip()
-        provider = _resolve_provider(config)
-        # A missing paid-provider key must not idle the worker: the free Google
-        # endpoints work for every row that has a canonical Maps URL.
-        if provider is not boq and not provider.configured():
-            logger.info(
-                "Benchmark provider %r is not configured; using free Google endpoints",
-                source,
-            )
-            provider = boq
-            source = "boq"
         reviews_limit = PROVIDER_REVIEWS_LIMIT.get(source, 500)
-
+        # Official Places supplies facts; BOQ supplies deep reviews and is the
+        # complete fallback. A row without a canonical Maps feature id can only
+        # be refreshed when a non-BOQ primary can answer on its own.
+        boq_only = source in {"boq", "gosom"} or (
+            source == "google_places" and not places.configured()
+        )
         cutoff = moment - timedelta(hours=max(1, config.refresh_hours))
         due = await _due_rows(db, cutoff, limit)
         skipped = 0
-        if provider is boq:
+        if boq_only:
             refreshable = [row for row in due if boq.feature_id(row[4])]
             skipped = len(due) - len(refreshable)
             due = refreshable
@@ -201,19 +198,13 @@ async def refresh_due_places(
         for google_place_id, targets in grouped.items():
             maps_url = group_maps_url.get(google_place_id)
             try:
-                if provider is boq:
-                    details = await boq.get_place(
-                        google_place_id, reviews_limit=reviews_limit,
-                        maps_url=maps_url, days=None,
-                    )
-                elif provider is outscraper:
-                    details = await outscraper.get_place(
-                        google_place_id, reviews_limit=reviews_limit, cutoff=cutoff_ts
-                    )
-                else:
-                    details = await places.get_place(
-                        google_place_id, reviews_limit=reviews_limit, cutoff=cutoff_ts
-                    )
+                details = await provider.get_details(
+                    source,
+                    google_place_id,
+                    reviews_limit=reviews_limit,
+                    maps_url=maps_url,
+                    cutoff=cutoff_ts,
+                )
             except (places.PlacesError, boq.BoqError, outscraper.OutscraperError) as exc:
                 if getattr(exc, "status_code", None) == 503:
                     # No API key / not configured: every remaining call fails the same way.

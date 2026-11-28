@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
-from app.modules.benchmark import boq, places, scraper, service
+from app.modules.benchmark import boq, places, provider, scraper, service
 from app.modules.benchmark.models import BenchmarkPlace, BenchmarkSnapshot
 
 TENANT = "11111111-1111-1111-1111-111111111111"
@@ -30,6 +30,30 @@ async def _row(db, place_id: str, maps_url: str | None = MAPS_URL):
     db.add(row)
     await db.commit()
     return row
+
+
+async def test_worker_uses_provider_strategy_for_official_source(db, monkeypatch):
+    config = await service.get_config(db)
+    config.source = "google_places"
+    await db.commit()
+    await _row(db, "official-1")
+    called = {}
+
+    async def fake_get_details(source, place_id, **kwargs):
+        called.update({"source": source, "place_id": place_id, **kwargs})
+        return {
+            "place_id": place_id, "name": "Official Cafe", "rating": 4.4,
+            "review_count": 120, "reviews": [{"rating": 5}] * 500,
+        }
+
+    monkeypatch.setattr(provider, "get_details", fake_get_details)
+
+    result = await scraper.refresh_due_places()
+
+    assert result["scraped"] == 1
+    assert called["source"] == "google_places"
+    assert called["reviews_limit"] == 500
+    assert called["maps_url"] == MAPS_URL
 
 
 async def test_unconfigured_provider_falls_back_to_the_free_provider(db, monkeypatch):
