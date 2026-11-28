@@ -584,7 +584,18 @@ async def whatsapp_session(
     try:
         if body.code:
             exchanged = await adapter.exchange_code(body.code)
-            credentials["access_token"] = exchanged.get("access_token", "")
+            # Keep the complete provider payload through classification. The
+            # token itself is encrypted by store_connection and never persisted
+            # in connection_metadata.
+            credentials.update(exchanged)
+            credentials["business_id"] = body.business_id or exchanged.get("business_id")
+            credentials["waba_id"] = body.waba_id or exchanged.get("waba_id")
+            credentials["phone_number_id"] = (
+                body.phone_number_id or exchanged.get("phone_number_id")
+            )
+            from .token_rotation import prepare_whatsapp_credentials
+
+            credentials = await prepare_whatsapp_credentials(adapter, credentials)
         conn = await _service.store_connection(db, tenant_id, "whatsapp", credentials)
         discovered = await adapter.discover_assets(credentials)
         assets = await _service.save_discovered_assets(

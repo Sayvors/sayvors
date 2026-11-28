@@ -125,9 +125,27 @@ async def store_connection(
         conn.access_token_encrypted = encrypt_credential(token)
     conn.scopes = scopes or credentials.get("scopes", []) or []
     conn.status = "active"
-    conn.connection_metadata = {
-        k: v for k, v in credentials.items() if k != "access_token"
+    token_state_keys = {
+        "token_kind", "token_expires_at", "data_access_expires_at",
+        "token_last_rotated_at", "token_rotation_error", "token_expiry_source",
+        "token_rotation_next_attempt_at",
     }
+    conn.connection_metadata = {
+        k: v for k, v in credentials.items()
+        if k != "access_token" and not k.startswith("_") and k not in token_state_keys
+    }
+    if provider == "whatsapp" and (token or token_state_keys.intersection(credentials)):
+        conn.token_kind = credentials.get("token_kind")
+        conn.token_expires_at = credentials.get("token_expires_at")
+        conn.data_access_expires_at = credentials.get("data_access_expires_at")
+        conn.token_last_rotated_at = credentials.get("token_last_rotated_at")
+        conn.token_rotation_attempts = 0
+        conn.token_rotation_error = credentials.get("token_rotation_error")
+        conn.token_rotation_next_attempt_at = credentials.get("token_rotation_next_attempt_at")
+        conn.token_rotation_lease_until = None
+        conn.status = credentials.get("_token_status", "active")
+        if credentials.get("token_expiry_source"):
+            conn.connection_metadata["token_expiry_source"] = credentials["token_expiry_source"]
     db.add(conn)
     await db.commit()
     await db.refresh(conn)

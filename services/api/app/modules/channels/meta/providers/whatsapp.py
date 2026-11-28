@@ -10,11 +10,18 @@ import hashlib
 import logging
 import re
 import time
+from datetime import datetime, timezone
+
+import httpx
 
 from .....config import settings
 from .....core.http import UnsafeUrlError
 from .....core.pinned_http import fetch_pinned_media
-from .base import DiscoveredAsset, MetaAPIError, MetaProviderAdapter, graph_base
+from .base import (
+    DiscoveredAsset, MetaAPIError, MetaAmbiguousError, MetaProviderAdapter,
+    MetaTransportError, graph_base,
+)
+from ..token_rotation import parse_debug_token
 
 logger = logging.getLogger(__name__)
 
@@ -185,27 +192,69 @@ class WhatsAppAdapter(MetaProviderAdapter):
             "state": state,
         }
 
-    async def exchange_code(self, code: str, redirect_uri: str | None = None) -> dict:
-        """Exchange the Embedded Signup auth code for a business token."""
+    async def _oauth_payload(self, params: dict, *, public_error: str) -> dict:
+        """Call Meta's OAuth endpoint without retaining raw error bodies."""
         if not settings.META_APP_ID or not settings.META_APP_SECRET:
             raise MetaAPIError("Meta app not configured (META_APP_ID/SECRET)", 503)
         version = settings.META_GRAPH_API_VERSION or "v26.0"
-        resp = await self._http.get(
-            f"https://graph.facebook.com/{version}/oauth/access_token",
-            params={
+        try:
+            resp = await self._http.get(
+                f"https://graph.facebook.com/{version}/oauth/access_token",
+                params=params,
+            )
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            raise MetaTransportError("Meta OAuth endpoint unreachable") from exc
+        except httpx.HTTPError as exc:
+            raise MetaAmbiguousError("Meta OAuth response was interrupted") from exc
+        if resp.status_code != 200:
+            raise MetaAPIError(
+                f"Meta OAuth request failed ({resp.status_code})",
+                resp.status_code,
+                public=public_error,
+            )
+        payload = resp.json()
+        if not isinstance(payload, dict) or not payload.get("access_token"):
+            raise MetaAPIError("Meta OAuth response had no access token", 502, public=public_error)
+        return payload
+
+    async def exchange_code(self, code: str, redirect_uri: str | None = None) -> dict:
+        """Exchange the Embedded Signup code, preserving every returned field."""
+        return await self._oauth_payload(
+            {
                 "client_id": settings.META_APP_ID,
                 "client_secret": settings.META_APP_SECRET,
                 "code": code,
             },
+            public_error="WhatsApp rejected the sign-in. Try connecting again.",
         )
-        if resp.status_code != 200:
-            raise MetaAPIError(
-                f"WhatsApp code exchange failed ({resp.status_code}): "
-                f"{resp.text[:300]}",
-                401,
-                public="WhatsApp rejected the sign-in. Try connecting again.",
-            )
-        return resp.json()  # {access_token, ...}
+
+    async def inspect_token(self, token: str):
+        """Inspect a business token with an app token, never as caller auth."""
+        app_payload = await self._oauth_payload(
+            {
+                "client_id": settings.META_APP_ID,
+                "client_secret": settings.META_APP_SECRET,
+                "grant_type": "client_credentials",
+            },
+            public_error="WhatsApp token inspection is temporarily unavailable.",
+        )
+        resp = await self._graph(
+            "GET", "/debug_token", app_payload["access_token"],
+            params={"input_token": token},
+        )
+        return parse_debug_token(resp.json(), now=datetime.now(timezone.utc))
+
+    async def exchange_long_lived_token(self, token: str) -> dict:
+        """Exchange a confirmed USER token; never call for system/business tokens."""
+        return await self._oauth_payload(
+            {
+                "client_id": settings.META_APP_ID,
+                "client_secret": settings.META_APP_SECRET,
+                "grant_type": "fb_exchange_token",
+                "fb_exchange_token": token,
+            },
+            public_error="WhatsApp could not extend the access token. Try reconnecting.",
+        )
 
     async def discover_assets(self, credentials: dict) -> list[DiscoveredAsset]:
         """List WABAs + phone numbers visible to the business token."""
