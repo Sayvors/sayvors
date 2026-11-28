@@ -6,6 +6,10 @@ Root-level rules for any agent working in this repo. These override default habi
 
 ## 1. Test only what you changed
 
+**Always use the configured pytest-xdist workers for test runs. Do not pass
+`-n 0`.** Scope the run to the relevant test files, but let xdist parallelize
+those files so verification finishes quickly.
+
 **Never run the full suite to validate a scoped change.** It burns CI minutes on
 GitHub for nothing. The full suite runs in parallel via pytest-xdist (configured in
 `services/api/pyproject.toml`) and takes a few minutes; a scoped run is still faster.
@@ -116,3 +120,5 @@ re-do finished work, and update it when you finish something.
 
 
 ## 8. Do not use gh, do not create PR yourself.
+
+**Do not spawn subagents unless the user explicitly asks for them.**

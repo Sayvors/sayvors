@@ -21,13 +21,24 @@ type, `expires_at`, `data_access_expires_at`, and scopes are captured.
 | --- | --- |
 | `USER` | Exchange with `fb_exchange_token` immediately at connect and within seven days of expiry. |
 | `BUSINESS_INTEGRATION_SYSTEM_USER` | No exchange. Null reported expiry means non-expiring and healthy. |
-| `SYSTEM_USER` | No exchange. Null reported expiry means non-expiring; reported expiry is validation-only. |
+| `SYSTEM_USER` | No exchange. Null reported expiry means non-expiring. The current due scan does not auto-select system/business kinds, so unusual expiring tokens require operator monitoring. |
 | Other/unknown | Never guess an exchange. Inspect, preserve deadlines, and alert before expiry when rotation is unsupported. |
 
 The earlier of token expiry and data-access expiry is the effective send
 deadline. A 60-day fallback is used only when a User-token long-lived exchange
 omits expiry; it is recorded as `user_exchange_fallback_60d`. No synthetic
-expiry is assigned to system/business tokens.
+expiry is assigned to system/business tokens. If an exchange omits
+`data_access_expires_at`, the previously classified deadline is preserved so a
+later token expiry cannot silently extend data access.
+
+## Secret-safe provider and telemetry I/O
+
+OAuth credentials are sent as form fields rather than URL query parameters.
+The Graph caller credential remains a server-generated app access token; tenant
+tokens are never used as caller authentication for `/debug_token`. Sentry and
+GlitchTip error and transaction hooks recursively strip URL query strings before
+transmission, preventing OAuth credentials or tenant tokens from entering
+telemetry even when an HTTP integration captures a request URL.
 
 ## Durable state and bounded worker
 
@@ -50,9 +61,9 @@ overwritten by a stale result. Expired leases are reclaimable after a crash.
 
 Transport failures, HTTP 408/425/429, and 5xx retain the old ciphertext, record a
 bounded safe code, and schedule exponential backoff from 15 minutes up to six
-hours. Other permanent 4xx responses or invalid token metadata mark
-`needs_reauth`. Unexpected internal errors are recorded as retryable safe
-codes rather than misclassified as revoked credentials.
+hours. Other permanent 4xx responses mark `needs_reauth`. Invalid token metadata
+is recorded as a retryable safe code; unexpected internal errors are also
+recorded as retryable rather than misclassified as revoked credentials.
 
 ## Send guard and reauth transitions
 
@@ -64,12 +75,17 @@ Instagram credential behavior is unchanged. Inbound webhook persistence does
 not use this send guard.
 
 Validation, the rotation worker, and automated WhatsApp send paths call the
-shared reauth helper after permanent auth rejection. The helper conditionally
-transitions the row and inserts tenant/admin notifications in the same
-transaction. Repeated failures cannot duplicate alerts for one episode; a
-successful reconnect clears the error and starts a new episode. HTTP 400 is
-only treated as send-auth failure when Meta's safe error code/message indicates
-an OAuth/token problem, so ordinary payload/window errors are not mislabeled.
+shared reauth helper after permanent auth rejection. Callers capture the
+encrypted credential before provider I/O and pass it as a compare-and-swap
+precondition, so a stale rejection cannot mark a newly reconnected token as
+needing reauth. The helper conditionally transitions the row and inserts
+tenant/admin notifications in the same transaction. Repeated failures cannot
+duplicate alerts for one episode; a successful reconnect clears the error and
+starts a new episode. HTTP 400 is only treated as send-auth failure when Meta's
+safe error code/message indicates an OAuth/token problem, so ordinary
+payload/window errors are not mislabeled. WhatsApp session completion requires
+an authorization code, and tokenless WhatsApp upserts fail closed instead of
+reactivating an old credential.
 
 Tenant notifications deep-link to `/dashboard/channels`. Admin notifications
 are global warnings containing only tenant ID, connection ID, and a safe

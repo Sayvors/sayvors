@@ -26,7 +26,8 @@ mode are retained. Funding modes are `direct_client`, `shared_credit_line`,
 `platform_liable`, or internal `unknown`. API presentation conservatively maps
 unknown liability to client-direct so it cannot enter Sayvors-payable totals.
 Costs are grouped by native currency and funding mode; unlike currencies are
-never summed. Only `platform_liable` facts are Sayvors COGS.
+never summed. `platform_liable` and `shared_credit_line` facts are Sayvors-payable
+COGS; `direct_client` and unknown liability are excluded from platform margin.
 
 Status webhooks retain `billable`, `pricing_model`, category/type/subtype. A
 `sent` status on a stored outbound row confirms reconciliation without adding a
@@ -58,9 +59,11 @@ released pre-send failures.
 
 ## APIs
 
-- `GET /api/v1/billing/whatsapp-usage?days=30|90|365` is tenant-scoped and returns
-  local used/limit/remaining plus native-currency/funding totals and WABA, phone,
-  and category breakdowns.
+- `GET /api/v1/billing/whatsapp-usage?days=30|90|365` requires `channels.view`,
+  is tenant-scoped, and returns local used/limit/remaining plus
+  native-currency/funding totals and WABA, phone, and category breakdowns.
+  Members with channel-level `none` overrides keep tenant aggregates but receive
+  no phone breakdown.
 - `GET /api/v1/admin/whatsapp-spend?days=30|90|365` requires the separate admin
   gate and returns per-tenant/WABA rows plus authoritative totals.
 
