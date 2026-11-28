@@ -61,7 +61,10 @@ export default function QuestionResults({
                       <span aria-hidden="true">·</span>
                     </>
                   )}
-                  <span>{intentLabel(question.customer_intent)}</span>
+                  <span>
+                    {copy.intentLabels[question.customer_intent as keyof typeof copy.intentLabels] ??
+                      intentLabel(question.customer_intent)}
+                  </span>
                   <span aria-hidden="true">·</span>
                   <span>{stage}</span>
                   {question.mentioned != null && (

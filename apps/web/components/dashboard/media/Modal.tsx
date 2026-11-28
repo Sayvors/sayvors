@@ -9,6 +9,7 @@ export interface ModalProps {
   subtitle?: string;
   labelledBy?: string;
   width?: string;
+  className?: string;
   busy?: boolean;
   closeLabel?: string;
   children: ReactNode;
@@ -20,7 +21,7 @@ const FOCUSABLE = 'a[href], button:not([disabled]), textarea, input, select, sum
 const MODAL_STACK: HTMLElement[] = [];
 let bodyOverflowBeforeModal = "";
 
-export default function Modal({ open, onClose, title, subtitle, labelledBy, width = "max-w-[600px]", busy, closeLabel = "Close", children }: ModalProps) {
+export default function Modal({ open, onClose, title, subtitle, labelledBy, width = "max-w-[600px]", className = "", busy, closeLabel = "Close", children }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const prevFocus = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
@@ -96,7 +97,7 @@ export default function Modal({ open, onClose, title, subtitle, labelledBy, widt
         aria-labelledby={labelledBy ?? (title ? titleId : undefined)}
         aria-describedby={subtitle ? subtitleId : undefined}
         tabIndex={-1}
-        className={`flex max-h-[92vh] w-full ${width} flex-col overflow-hidden rounded-[8px] bg-white shadow-[0_40px_80px_-40px_rgba(20,16,31,0.55)] ring-1 ring-ink/[0.08] outline-none dark:bg-[#1b1530] dark:ring-white/[0.08]`}
+        className={`flex max-h-[92vh] w-full ${width} flex-col overflow-hidden rounded-[8px] bg-white shadow-[0_40px_80px_-40px_rgba(20,16,31,0.55)] ring-1 ring-ink/[0.08] outline-none dark:bg-[#1b1530] dark:ring-white/[0.08] ${className}`}
       >
         {(title || subtitle) && (
           <div className="flex items-start justify-between gap-3 border-b border-ink/[0.06] px-6 py-5 dark:border-white/[0.08]">
@@ -109,7 +110,7 @@ export default function Modal({ open, onClose, title, subtitle, labelledBy, widt
               onClick={onClose}
               disabled={busy}
               aria-label={closeLabel}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[16px] font-bold text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-deep-violet/40 dark:text-fog/45"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[16px] font-bold text-ink/70 transition hover:bg-ink/[0.05] hover:text-ink disabled:opacity-50 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-[var(--ai-signal,#B0338A)] focus-visible:outline-offset-[3px] dark:text-fog/70"
             >
               ×
             </button>

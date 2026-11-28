@@ -417,7 +417,7 @@ export default function AiVisibilityPage() {
               </div>
               <p>{copy.classificationUncertain}: {uncertainties.length ? uncertainties.join(" · ") : "—"}</p>
               <p className="text-[11px] text-[var(--ai-muted)]">
-                {copy.versionHistory}: {branchData.versions.map((row) => `v${row.version} (${row.status})`).join(" · ")}
+                {copy.versionHistory}: {branchData.versions.map((row) => `v${row.version} (${querySetStatusLabel(row.status, copy)})`).join(" · ")}
               </p>
             </div>
           </details>
@@ -435,6 +435,7 @@ export default function AiVisibilityPage() {
         title={copy.decisionBrief}
         subtitle={selectedQuestionSubtitle}
         width="max-w-[920px]"
+        className="rounded-[var(--ai-radius-panel)]"
         closeLabel={copy.close}
       >
         {selectedRunId && (

@@ -74,6 +74,22 @@ export default function ResearchRunPanel({
       : detail.status === "insufficient_evidence"
         ? "warn"
         : "danger";
+  const canRetry =
+    detail.status === "failed" ||
+    detail.status === "insufficient_evidence" ||
+    detail.status === "ambiguous";
+  const retry = async () => {
+    setActionError(null);
+    setRetrying(true);
+    try {
+      const retried = await retryRun(detail.id);
+      onRetry(retried.id);
+    } catch (exc) {
+      setActionError(exc instanceof Error ? exc.message : copy.loadError);
+    } finally {
+      setRetrying(false);
+    }
+  };
   return (
     <div className="space-y-5" aria-live="polite">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ai-line)] pb-4">
@@ -83,23 +99,11 @@ export default function ResearchRunPanel({
             <p className="text-[12px] font-bold text-[var(--ai-ink)]">{stage}</p>
           </div>
         </div>
-        {(detail.status === "failed" ||
-          detail.status === "insufficient_evidence") && (
+        {canRetry && (
           <button
             type="button"
             disabled={retrying}
-            onClick={async () => {
-              setActionError(null);
-              setRetrying(true);
-              try {
-                const retried = await retryRun(detail.id);
-                onRetry(retried.id);
-              } catch (exc) {
-                setActionError(exc instanceof Error ? exc.message : copy.loadError);
-              } finally {
-                setRetrying(false);
-              }
-            }}
+            onClick={() => void retry()}
             className="ai-btn-primary min-h-10 px-3 text-[11px]"
             title={copy.tipRetry}
           >
@@ -127,10 +131,30 @@ export default function ResearchRunPanel({
         </div>
       )}
       {(actionError ||
+        detail.status === "ambiguous" ||
         (detail.error && detail.status !== "insufficient_evidence")) && (
-        <p role="alert" className="rounded-[var(--ai-radius-control)] bg-[var(--ai-sunken)] px-4 py-3 text-[12px] leading-5 text-[var(--ai-danger)]">
-          {researchErrorMessage(actionError ?? detail.error)}
-        </p>
+        <div
+          role="alert"
+          className="rounded-[var(--ai-radius-control)] bg-[var(--ai-sunken)] px-4 py-3 text-[12px] leading-5 text-[var(--ai-danger)]"
+        >
+          <p>
+            {actionError
+              ? researchErrorMessage(actionError)
+              : detail.status === "ambiguous"
+                ? copy.ambiguousVerification
+                : researchErrorMessage(detail.error)}
+          </p>
+          {detail.status === "ambiguous" && (
+            <button
+              type="button"
+              disabled={retrying}
+              onClick={() => void retry()}
+              className="mt-2 min-h-9 text-[11px] font-bold underline"
+            >
+              {retrying ? copy.running : copy.retry}
+            </button>
+          )}
+        </div>
       )}
       {!active && (detail.status === "completed" || detail.status === "insufficient_evidence") && (
         <>
@@ -142,7 +166,7 @@ export default function ResearchRunPanel({
           />
         </>
       )}
-      {!active && detail.status === "failed" && (
+      {!active && (detail.status === "failed" || detail.status === "ambiguous") && (
         <ResearchFacts
             coverage={detail.evidence_coverage}
             copy={copy}

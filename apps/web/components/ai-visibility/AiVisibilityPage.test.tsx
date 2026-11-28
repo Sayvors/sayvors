@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
 }));
 const channels = vi.hoisted(() => ({ value: [] as Array<{ id: string; label: string }> }));
 const query = vi.hoisted(() => ({ invalidateQueries: vi.fn() }));
+const i18n = vi.hoisted(() => ({ locale: "en" }));
 
 vi.mock("@/lib/api-ai-visibility", () => api);
 vi.mock("./ResearchRunPanel", () => ({
@@ -26,10 +27,19 @@ vi.mock("@/lib/i18n/I18nProvider", async () => {
     "@/lib/i18n/I18nProvider",
   );
   const en = await vi.importActual<typeof import("@/lib/i18n/en")>("@/lib/i18n/en");
-  return { ...actual, useI18n: () => ({ locale: "en", dir: "ltr", t: en.default }) };
+  const ar = await vi.importActual<typeof import("@/lib/i18n/ar")>("@/lib/i18n/ar");
+  return {
+    ...actual,
+    useI18n: () => ({
+      locale: i18n.locale,
+      dir: i18n.locale === "ar" ? "rtl" : "ltr",
+      t: i18n.locale === "ar" ? ar.default : en.default,
+    }),
+  };
 });
 
 import { useQuery } from "@tanstack/react-query";
+import ar from "@/lib/i18n/ar";
 import AiVisibilityPage from "./AiVisibilityPage";
 
 const latestData = {
@@ -97,6 +107,7 @@ const latestData = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  i18n.locale = "en";
   channels.value = [];
   query.invalidateQueries.mockResolvedValue(undefined);
   api.fetchLatestQuerySet.mockResolvedValue(latestData);
@@ -172,6 +183,7 @@ describe("AiVisibilityPage", () => {
     trigger.focus();
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveClass("rounded-[var(--ai-radius-panel)]");
     expect(screen.getByText("Brief for run-1")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -214,6 +226,53 @@ describe("AiVisibilityPage", () => {
     expect(screen.getAllByText("Makkah Branch").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Jeddah Branch").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Select a branch to research" })).toBeDisabled();
+  });
+
+  it("localizes aggregate intent labels in Arabic", () => {
+    i18n.locale = "ar";
+    channels.value = [
+      { id: "branch-1", label: "فرع مكة" },
+      { id: "branch-2", label: "فرع جدة" },
+    ];
+    vi.mocked(useQuery).mockReturnValue({
+      data: channels.value.map((channel, index) => ({
+        channel,
+        data: {
+          ...latestData,
+          query_set: { ...latestData.query_set, id: `qs-${index + 1}`, channel_id: channel.id },
+          questions: [{ ...latestData.questions[0], id: `question-${index + 1}`, query_set_id: `qs-${index + 1}` }],
+        },
+        error: null,
+      })),
+      isPending: false,
+      isError: false,
+    } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: ar.aiVisibility.branch }), {
+      target: { value: "all" },
+    });
+
+    expect(screen.getAllByText("الترخيص")).toHaveLength(2);
+    expect(screen.queryByText("licensing")).not.toBeInTheDocument();
+    expect(screen.getAllByText(ar.aiVisibility.stages.completed).length).toBeGreaterThan(0);
+  });
+
+  it("maps branch version statuses through localized stages", () => {
+    channels.value = [{ id: "branch-1", label: "Sayvors Branch" }];
+    const versioned = {
+      ...latestData,
+      versions: [
+        { ...latestData.versions[0], status: "completed" },
+        { ...latestData.versions[0], id: "qs-old", version: 2, status: "failed" },
+      ],
+    };
+    vi.mocked(useQuery).mockReturnValue({ data: versioned, isPending: false, isError: false } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.click(screen.getByText("How we chose these questions"));
+
+    expect(screen.getByText(/Version history: v1 \(Completed\) · v2 \(Failed\)/)).toBeInTheDocument();
   });
 
   it("shows loading instead of an empty state while all-locations research is pending", () => {

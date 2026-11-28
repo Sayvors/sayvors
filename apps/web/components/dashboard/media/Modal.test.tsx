@@ -38,6 +38,27 @@ function NestedModals({ busy = false }: { busy?: boolean }) {
 }
 
 describe("Modal", () => {
+  it("uses a contrast-safe close glyph and visible keyboard focus ring", () => {
+    render(<Modal open onClose={vi.fn()} title="Decision brief">Content</Modal>);
+    const close = screen.getByRole("button", { name: "Close" });
+
+    expect(close).toHaveClass("text-ink/70");
+    expect(close).not.toHaveClass("text-ink/45");
+    expect(close).toHaveClass("focus-visible:outline-[3px]");
+    expect(close).toHaveClass("focus-visible:outline-[var(--ai-signal,#B0338A)]");
+    expect(close).toHaveClass("focus-visible:outline-offset-[3px]");
+  });
+
+  it("applies a caller-provided panel className", () => {
+    render(
+      <Modal open onClose={vi.fn()} title="Decision brief" className="rounded-[var(--ai-radius-panel)]">
+        Content
+      </Modal>,
+    );
+
+    expect(screen.getByRole("dialog")).toHaveClass("rounded-[var(--ai-radius-panel)]");
+  });
+
   it("includes native evidence summaries in keyboard focus order", async () => {
     const user = userEvent.setup();
     render(
