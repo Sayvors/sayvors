@@ -47,6 +47,25 @@ def decrypt_connection_token(connection) -> str | None:
     return decrypt_credential(getattr(connection, "access_token_encrypted", None))
 
 
+def sanitize_metadata(value, *, depth: int = 0):
+    """Recursively mask credential fields before persisting provider metadata."""
+    if depth >= 8:
+        return "***"
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            name = str(key).lower()
+            safe_name = name in {"token_type", "token_kind", "token_expiry_source"}
+            sensitive = name in {"token", "code"} or any(
+                part in name for part in ("access_token", "authorization", "secret", "password", "pin")
+            )
+            out[key] = "***" if sensitive and not safe_name else sanitize_metadata(item, depth=depth + 1)
+        return out
+    if isinstance(value, list):
+        return [sanitize_metadata(item, depth=depth + 1) for item in value]
+    return value
+
+
 def redact(mapping: dict | None) -> dict:
     """Return a copy with credential-looking values masked (safe to log)."""
     if not mapping:

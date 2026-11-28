@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import oauth as _oauth
-from .credentials import decrypt_connection_token, encrypt_credential
+from .credentials import decrypt_connection_token, encrypt_credential, sanitize_metadata
 from .models import MetaAsset, MetaConnection
 from ..models import Channel, ChannelMessage
 from .providers.base import DiscoveredAsset, MetaAPIError, MetaProviderAdapter
@@ -130,10 +130,10 @@ async def store_connection(
         "token_last_rotated_at", "token_rotation_error", "token_expiry_source",
         "token_rotation_next_attempt_at",
     }
-    conn.connection_metadata = {
+    conn.connection_metadata = sanitize_metadata({
         k: v for k, v in credentials.items()
         if k != "access_token" and not k.startswith("_") and k not in token_state_keys
-    }
+    })
     if provider == "whatsapp" and (token or token_state_keys.intersection(credentials)):
         conn.token_kind = credentials.get("token_kind")
         conn.token_expires_at = credentials.get("token_expires_at")

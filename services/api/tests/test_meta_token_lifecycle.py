@@ -266,3 +266,29 @@ async def test_malformed_inspection_metadata_keeps_connect_recoverable():
     assert prepared["token_rotation_error"] == "invalid_token_metadata"
     assert prepared["token_expires_at"] == NOW + timedelta(hours=1)
     adapter.exchange_long_lived_token.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_store_connection_never_persists_plaintext_nested_tokens(db):
+    from app.modules.channels.meta import service
+    from app.modules.channels.meta.credentials import decrypt_credential
+
+    conn = await service.store_connection(
+        db, "metadata-tenant", "whatsapp",
+        {
+            "access_token": "top-secret-token",
+            "authorization": "Bearer header-secret",
+            "extension": {
+                "access_token": "nested-secret-token",
+                "safe_value": "preserved",
+                "deeper": {"client_secret": "nested-app-secret"},
+            },
+        },
+    )
+    metadata = repr(conn.connection_metadata)
+    assert "top-secret-token" not in metadata
+    assert "header-secret" not in metadata
+    assert "nested-secret-token" not in metadata
+    assert "nested-app-secret" not in metadata
+    assert conn.connection_metadata["extension"]["safe_value"] == "preserved"
+    assert decrypt_credential(conn.access_token_encrypted) == "top-secret-token"
