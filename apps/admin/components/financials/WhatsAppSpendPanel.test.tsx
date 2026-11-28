@@ -143,6 +143,9 @@ describe("WhatsAppSpendPanel", () => {
   });
 
   it("reloads when the spend period changes", async () => {
+    mockFetch
+      .mockResolvedValueOnce(response())
+      .mockResolvedValueOnce(response({ days: 90 }));
     const user = userEvent.setup();
     render(<WhatsAppSpendPanel />);
     await screen.findByRole("table", { name: "WhatsApp spend by tenant and WABA" });
@@ -150,6 +153,22 @@ describe("WhatsAppSpendPanel", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Spend period" }), "90");
 
     expect(await screen.findByRole("table", { name: "WhatsApp spend by tenant and WABA" })).toBeInTheDocument();
+    expect(mockFetch).toHaveBeenLastCalledWith(90);
+  });
+
+  it("does not show stale figures when a newly selected period fails", async () => {
+    mockFetch
+      .mockResolvedValueOnce(response())
+      .mockRejectedValueOnce(new Error("offline"));
+    const user = userEvent.setup();
+    render(<WhatsAppSpendPanel />);
+    await screen.findByRole("table", { name: "WhatsApp spend by tenant and WABA" });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Spend period" }), "90");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load WhatsApp spend.");
+    expect(screen.queryByRole("table", { name: "WhatsApp spend by tenant and WABA" })).not.toBeInTheDocument();
+    expect(screen.queryByText("$10.00")).not.toBeInTheDocument();
     expect(mockFetch).toHaveBeenLastCalledWith(90);
   });
 

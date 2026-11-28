@@ -156,3 +156,7 @@ jobs:
       - name: Run TypeScript typecheck
         working-directory: apps/admin
         run: npx tsc --noEmit
+
+      - name: Run admin tests
+        working-directory: apps/admin
+        run: npm test

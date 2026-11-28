@@ -112,6 +112,7 @@ export default function WhatsAppSpendPanel() {
   }, [request]);
 
   const summary = useMemo(() => data ? summarizeWhatsAppSpend(data) : null, [data]);
+  const hasCurrentData = data?.days === days;
   const numberFormat = new Intl.NumberFormat(locale);
   const directValue = summary
     ? summary.directClientByCurrency.length > 0
@@ -174,7 +175,7 @@ export default function WhatsAppSpendPanel() {
             disabled={loading}
             className={`h-9 rounded-[2px] border border-[var(--ui-line-strong)] px-3 text-[11px] font-semibold text-ink/60 transition hover:border-deep-violet hover:text-deep-violet disabled:opacity-50 ${FOCUS_RING}`}
           >
-            {loading && data ? copy.updating : copy.refresh}
+            {loading && hasCurrentData ? copy.updating : copy.refresh}
           </button>
         </div>
       </div>
@@ -186,7 +187,7 @@ export default function WhatsAppSpendPanel() {
         </div>
       )}
 
-      {error && !data && (
+      {error && !hasCurrentData && (
         <div role="alert" className="rounded-[2px] border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700">
           <p>{copy.loadError}</p>
           <button type="button" onClick={refresh} className={`mt-2 min-h-8 rounded-[2px] border border-red-300 px-3 font-semibold ${FOCUS_RING}`}>
@@ -195,14 +196,14 @@ export default function WhatsAppSpendPanel() {
         </div>
       )}
 
-      {error && data && (
+      {error && hasCurrentData && (
         <p role="alert" className="text-[11px] text-red-700">
           {copy.refreshError}{" "}
           <button type="button" onClick={refresh} className={`min-h-6 font-semibold underline ${FOCUS_RING}`}>{copy.retry}</button>
         </p>
       )}
 
-      {data && summary && (
+      {data && hasCurrentData && summary && (
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <SummaryCard label={copy.deliveredVolume} value={numberFormat.format(summary.deliveredVolume)} />
