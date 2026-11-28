@@ -159,17 +159,16 @@ def _service_match(text: str, profile: dict) -> bool:
         service_tokens = _tokens(label)
         if not service_tokens:
             continue
-        service_roots = _roots(service_tokens)
         question_roots = _roots(question_tokens)
         matches = sum(
             any(
                 question == token
                 or question.startswith(token)
                 or token.startswith(question)
-                or root in question_roots
+                or SERVICE_TOKEN_ROOTS.get(token, token) in question_roots
                 for question in question_tokens
             )
-            for token, root in zip(service_tokens, service_roots)
+            for token in service_tokens
         )
         if (len(service_tokens) == 1 and matches) or matches >= 2:
             return True
