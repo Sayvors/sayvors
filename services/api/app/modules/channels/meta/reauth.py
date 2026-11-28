@@ -55,14 +55,22 @@ async def _alert(db: AsyncSession, connection: MetaConnection, code: str, *, exp
     ))
 
 
-async def handle_meta_auth_failure(db: AsyncSession, connection: MetaConnection, exc: Exception) -> bool:
-    """Mark only permanent Meta auth rejections; transport/rate errors stay retryable."""
+async def handle_meta_auth_failure(
+    db: AsyncSession,
+    connection: MetaConnection,
+    exc: Exception,
+    *,
+    expected_ciphertext: str,
+) -> bool:
+    """Mark the credential used for I/O; a stale rejection cannot win after reconnect."""
     from .providers.base import MetaAPIError
 
     if not isinstance(exc, MetaAPIError):
         return False
     if exc.status_code in {401, 403}:
-        return await mark_needs_reauth(db, connection, "send_auth_rejected")
+        return await mark_needs_reauth(
+            db, connection, "send_auth_rejected", expected_ciphertext=expected_ciphertext,
+        )
     if exc.status_code != 400:
         return False
     error = exc.payload.get("error", {}) if isinstance(exc.payload, dict) else {}
@@ -72,7 +80,9 @@ async def handle_meta_auth_failure(db: AsyncSession, connection: MetaConnection,
         "access token", "oauth", "session has expired", "token has expired",
         "invalid token", "token expired",
     )):
-        return await mark_needs_reauth(db, connection, "send_auth_rejected")
+        return await mark_needs_reauth(
+            db, connection, "send_auth_rejected", expected_ciphertext=expected_ciphertext,
+        )
     return False
 
 

@@ -1,4 +1,5 @@
 """WhatsApp token lifecycle state, worker, and safety regression tests."""
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from types import SimpleNamespace
@@ -8,7 +9,9 @@ import pytest
 from sqlalchemy import func, select
 
 from app.modules.admin.models import AdminNotification
-from app.modules.channels.meta.credentials import decrypt_connection_token, encrypt_credential
+from app.modules.channels.meta.credentials import (
+    decrypt_connection_token, decrypt_credential, encrypt_credential,
+)
 from app.modules.channels.meta.models import MetaConnection
 from app.modules.channels.meta.reauth import handle_meta_auth_failure, mark_needs_reauth
 from app.modules.channels.meta.token_rotation import token_health
@@ -175,6 +178,43 @@ async def test_validation_permanent_auth_marks_and_alerts_but_transient_does_not
     assert (await db.execute(select(func.count()).select_from(Notification))).scalar_one() == 1
 
 
+async def test_stale_validation_failure_cannot_mark_reconnected_token(db, user_id, monkeypatch):
+    from app.modules.channels.meta import service
+
+    conn = await _seed_reauth_connection(db, user_id)
+    old_ciphertext = conn.access_token_encrypted
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def reject_after_reconnect(*_args):
+        started.set()
+        await release.wait()
+        return False, "auth_rejected"
+
+    adapter = AsyncMock()
+    adapter.validate_connection.side_effect = reject_after_reconnect
+    monkeypatch.setattr(service, "get_adapter", lambda _provider: adapter)
+
+    async def reconnect_during_io():
+        await started.wait()
+        await service.store_connection(
+            db, user_id, "whatsapp", {"access_token": "reconnected-token"},
+        )
+        release.set()
+
+    validation = asyncio.create_task(service.validate_connection(db, user_id, "whatsapp"))
+    await asyncio.gather(validation, reconnect_during_io())
+
+    assert validation.result() == ("active", "auth_rejected")
+    await db.refresh(conn)
+    assert conn.access_token_encrypted != old_ciphertext
+    assert decrypt_credential(conn.access_token_encrypted) == "reconnected-token"
+    assert conn.status == "active"
+    assert conn.token_rotation_error is None
+    assert (await db.execute(select(func.count()).select_from(Notification))).scalar_one() == 0
+    assert (await db.execute(select(func.count()).select_from(AdminNotification))).scalar_one() == 0
+
+
 async def test_validation_success_preserves_unsupported_expiry_attention(db, user_id, monkeypatch):
     from app.modules.channels.meta import service
 
@@ -237,6 +277,7 @@ async def test_send_auth_failure_marks_but_rate_limit_does_not(db, user_id, capl
     conn = await _seed_reauth_connection(db, user_id)
     assert await handle_meta_auth_failure(
         db, conn, MetaAPIError("provider echoed do-not-leak-token", 401),
+        expected_ciphertext=conn.access_token_encrypted,
     ) is True
     await db.commit()
     assert conn.status == "needs_reauth"
@@ -247,6 +288,7 @@ async def test_send_auth_failure_marks_but_rate_limit_does_not(db, user_id, capl
     await db.commit()
     assert await handle_meta_auth_failure(
         db, conn, MetaAPIError("rate limited", 429),
+        expected_ciphertext=conn.access_token_encrypted,
     ) is False
     await db.commit()
     assert conn.status == "active"

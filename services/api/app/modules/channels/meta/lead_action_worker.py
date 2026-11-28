@@ -100,6 +100,9 @@ async def _send_nudge(db, action: LeadAction, text: str) -> str:
             raise _PermanentSendError(f"asset {channel.platform_user_id} missing")
         if not asset.active:
             raise _PermanentSendError("asset deselected")
+        expected_ciphertext = (
+            asset.connection.access_token_encrypted if asset.connection else None
+        )
         token = (
             decrypt_connection_token(asset.connection) if asset.connection else None
         )
@@ -110,7 +113,9 @@ async def _send_nudge(db, action: LeadAction, text: str) -> str:
                 channel.platform_user_id, token, action.contact_id, text
             )
         except MetaAPIError as exc:
-            await handle_meta_auth_failure(db, asset.connection, exc)
+            await handle_meta_auth_failure(
+                db, asset.connection, exc, expected_ciphertext=expected_ciphertext,
+            )
             raise
 
     if action.platform == "instagram":

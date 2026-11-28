@@ -521,6 +521,7 @@ async def validate_connection(
     if conn is None:
         raise ValueError("No connection for this tenant")
     adapter = get_adapter(provider)
+    expected_ciphertext = conn.access_token_encrypted
     token = decrypt_connection_token(conn)
     ok, detail = await adapter.validate_connection(
         conn, {"access_token": token or ""}
@@ -540,7 +541,9 @@ async def validate_connection(
         if detail in {"auth_rejected", "missing token"}:
             from .reauth import mark_needs_reauth
 
-            await mark_needs_reauth(db, conn, "auth_rejected")
+            await mark_needs_reauth(
+                db, conn, "auth_rejected", expected_ciphertext=expected_ciphertext,
+            )
         else:
             conn.status = "error"
             conn.token_rotation_error = (

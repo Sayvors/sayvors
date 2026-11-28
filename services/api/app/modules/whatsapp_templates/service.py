@@ -793,6 +793,7 @@ async def send_template(
     from ..channels.meta.reauth import handle_meta_auth_failure
     from ..channels.meta.service import get_adapter
 
+    expected_ciphertext = asset.connection.access_token_encrypted
     token = decrypt_connection_token(asset.connection)
     if not token:
         row.status = "failed"
@@ -807,7 +808,9 @@ async def send_template(
             template.name, template.language, values,
         )
     except MetaAPIError as e:
-        auth_failed = await handle_meta_auth_failure(db, asset.connection, e)
+        auth_failed = await handle_meta_auth_failure(
+            db, asset.connection, e, expected_ciphertext=expected_ciphertext,
+        )
         row.status = "failed"
         row.error = (
             "WhatsApp needs reconnection" if auth_failed

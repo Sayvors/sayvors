@@ -1838,6 +1838,9 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
         # receipt IS the customer's question, and the team must be able to open
         # it even when the AI is off. Bytes live in the private store; the inbox
         # route authorizes every read.
+        expected_ciphertext = (
+            asset.connection.access_token_encrypted if asset.connection else None
+        )
         token = decrypt_connection_token(asset.connection) if asset.connection else None
         attachment_stored: bool | None = None
         if msg_type in INBOUND_MEDIA_TYPES:
@@ -2343,7 +2346,9 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                     await db.commit()
                     raise
                 except MetaAPIError as e:
-                    auth_failed = await handle_meta_auth_failure(db, asset.connection, e)
+                    auth_failed = await handle_meta_auth_failure(
+                        db, asset.connection, e, expected_ciphertext=expected_ciphertext,
+                    )
                     detail = "WhatsApp needs reconnection" if auth_failed else e.public
                     logger.error(
                         "WhatsApp short-circuit send failed from=+%s: status=%s",
@@ -2777,7 +2782,9 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                             use_buttons = False
                             e = None
                     if e is not None:
-                        auth_failed = await handle_meta_auth_failure(db, asset.connection, e)
+                        auth_failed = await handle_meta_auth_failure(
+                        db, asset.connection, e, expected_ciphertext=expected_ciphertext,
+                    )
                         detail = (
                             "WhatsApp needs reconnection" if auth_failed
                             else getattr(e, "public", type(e).__name__)
