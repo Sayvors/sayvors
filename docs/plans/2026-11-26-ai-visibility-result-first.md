@@ -179,6 +179,7 @@ Run: `git diff --check && git status --short`
 - [x] Result-first modal composition with top fixes, inline citations, source domains, and one evidence disclosure.
 - [x] EN/AR copy, responsive layout, keyboard/focus behavior, and evidence-row hover state.
 - [x] Frontend gate: 37 tests, TypeScript, ESLint, and production build pass.
+- [x] Independent review hardening: aggregate loading/error/partial states, branch identity, modal reverse-tab order, live-region elapsed time, and localized statuses; 43 focused tests pass.
 - [x] Browser verification through the existing dev tunnel after integration.
 - [ ] Authenticated staging and live-provider verification remain pending.
 
