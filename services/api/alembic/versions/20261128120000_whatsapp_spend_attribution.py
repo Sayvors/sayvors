@@ -1,12 +1,12 @@
 """Add WhatsApp quota reservations, monthly usage, and Meta spend facts.
 
-Revision ID: 20261128110000
-Revises: 20261128100000
+Revision ID: 20261128120000
+Revises: 20261128110000
 """
 from alembic import op
 
-revision = "20261128110000"
-down_revision = "20261128100000"
+revision = "20261128120000"
+down_revision = "20261128110000"
 branch_labels = None
 depends_on = None
 
