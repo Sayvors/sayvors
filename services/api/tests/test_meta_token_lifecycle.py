@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
+from urllib.parse import parse_qs
 
 from app.modules.channels.meta.providers.whatsapp import WhatsAppAdapter
 from app.modules.channels.meta.token_rotation import (
@@ -82,12 +83,21 @@ async def test_code_exchange_returns_complete_payload(monkeypatch):
     monkeypatch.setattr("app.modules.channels.meta.providers.whatsapp.settings.META_APP_ID", "app-1")
     monkeypatch.setattr("app.modules.channels.meta.providers.whatsapp.settings.META_APP_SECRET", "secret-1")
     payload = {"access_token": "opaque", "expires_in": 60, "extension": {"x": 1}}
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return _Response(payload)
+
     adapter = WhatsAppAdapter()
-    adapter._http = httpx.AsyncClient(transport=httpx.MockTransport(
-        lambda request: _Response(payload)
-    ))
+    adapter._http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
     try:
         assert await adapter.exchange_code("code-1") == payload
+        assert len(requests) == 1
+        assert not requests[0].url.query
+        form = parse_qs(requests[0].content.decode())
+        assert form["client_secret"] == ["secret-1"]
+        assert form["code"] == ["code-1"]
     finally:
         await adapter.close()
 
@@ -101,7 +111,10 @@ async def test_inspection_uses_app_token_not_business_token(monkeypatch):
     def handle(request):
         calls.append(request)
         if request.url.path.endswith("/oauth/access_token"):
-            assert request.url.params["grant_type"] == "client_credentials"
+            assert not request.url.query
+            form = parse_qs(request.content.decode())
+            assert form["grant_type"] == ["client_credentials"]
+            assert form["client_secret"] == ["secret-1"]
             return _Response({"access_token": "app-access-token"})
         assert request.url.path.endswith("/debug_token")
         assert request.headers["Authorization"] == "Bearer app-access-token"
@@ -125,7 +138,8 @@ async def test_long_lived_exchange_uses_fb_exchange_token(monkeypatch):
     seen = {}
 
     def handle(request):
-        seen.update(request.url.params)
+        assert not request.url.query
+        seen.update(parse_qs(request.content.decode()))
         return _Response({"access_token": "long-lived", "expires_in": 5184000})
 
     adapter = WhatsAppAdapter()
@@ -133,9 +147,10 @@ async def test_long_lived_exchange_uses_fb_exchange_token(monkeypatch):
     try:
         result = await adapter.exchange_long_lived_token("short-lived")
         assert result["access_token"] == "long-lived"
-        assert seen["grant_type"] == "fb_exchange_token"
-        assert seen["fb_exchange_token"] == "short-lived"
-        assert seen["client_id"] == "app-1"
+        assert seen["grant_type"] == ["fb_exchange_token"]
+        assert seen["fb_exchange_token"] == ["short-lived"]
+        assert seen["client_id"] == ["app-1"]
+        assert seen["client_secret"] == ["secret-1"]
     finally:
         await adapter.close()
 

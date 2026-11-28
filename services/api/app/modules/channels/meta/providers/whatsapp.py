@@ -198,9 +198,9 @@ class WhatsAppAdapter(MetaProviderAdapter):
             raise MetaAPIError("Meta app not configured (META_APP_ID/SECRET)", 503)
         version = settings.META_GRAPH_API_VERSION or "v26.0"
         try:
-            resp = await self._http.get(
+            resp = await self._http.post(
                 f"https://graph.facebook.com/{version}/oauth/access_token",
-                params=params,
+                data=params,
             )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             raise MetaTransportError("Meta OAuth endpoint unreachable") from exc

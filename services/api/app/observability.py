@@ -24,6 +24,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import sentry_sdk
 
@@ -45,6 +46,18 @@ _SENSITIVE_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _SCRUBBED = "[redacted]"
+_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+
+
+def _strip_url_query(value: str) -> str:
+    """Keep a URL's origin/path while removing credential-bearing components."""
+    try:
+        parts = urlsplit(value)
+        if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+            return value
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    except ValueError:
+        return _SCRUBBED
 
 
 def _git_sha() -> str | None:
@@ -87,9 +100,9 @@ def build_environment(service: str) -> str:
 
 
 def _scrub(value: Any, _depth: int = 0) -> Any:
-    """Recursively redact sensitive-looking values in event payloads."""
+    """Recursively redact secrets and URL queries in event payloads."""
     if _depth > 6:
-        return value
+        return _SCRUBBED
     if isinstance(value, dict):
         return {
             k: (_SCRUBBED if _SENSITIVE_KEY_RE.search(str(k)) else _scrub(v, _depth + 1))
@@ -97,6 +110,8 @@ def _scrub(value: Any, _depth: int = 0) -> Any:
         }
     if isinstance(value, list):
         return [_scrub(v, _depth + 1) for v in value]
+    if isinstance(value, str):
+        return _URL_RE.sub(lambda match: _strip_url_query(match.group(0)), value)
     return value
 
 
@@ -108,6 +123,11 @@ def _before_send(event: dict, hint: dict) -> dict | None:
         # fail during restarts; surfacing them buries real issues.
         if getattr(exc_type, "__name__", "") in {"ConnectionRefusedError"} and exc_value:
             return None
+    return _scrub(event)
+
+
+def _before_send_transaction(event: dict, hint: dict) -> dict | None:
+    """Apply the same recursive secret sanitation to performance events."""
     return _scrub(event)
 
 
@@ -141,6 +161,7 @@ def init_observability(service: str = DEFAULT_SERVICE) -> bool:
             # No user emails/IPs by default. Opt in explicitly if ever needed.
             send_default_pii=False,
             before_send=_before_send,
+            before_send_transaction=_before_send_transaction,
         )
         _configured = True
         logger.info(
