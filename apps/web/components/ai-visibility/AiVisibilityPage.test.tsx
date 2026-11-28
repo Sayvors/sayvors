@@ -197,7 +197,11 @@ describe("AiVisibilityPage", () => {
     ];
     const aggregate = [
       { channel: channels.value[0], data: latestData },
-      { channel: channels.value[1], data: { ...latestData, query_set: { ...latestData.query_set, channel_id: "branch-2" } } },
+      { channel: channels.value[1], data: {
+        ...latestData,
+        query_set: { ...latestData.query_set, id: "qs-2", channel_id: "branch-2" },
+        questions: [{ ...latestData.questions[0], id: "question-2", query_set_id: "qs-2" }],
+      } },
     ];
     vi.mocked(useQuery).mockReturnValue({ data: aggregate, isPending: false, isError: false } as never);
     render(<AiVisibilityPage />);
@@ -205,6 +209,7 @@ describe("AiVisibilityPage", () => {
       target: { value: "all" },
     });
     expect(screen.getByRole("heading", { name: "All locations" })).toBeInTheDocument();
+    expect(screen.getByText("Combined customer questions across all connected branches.")).toBeInTheDocument();
     expect(screen.getAllByText("Makkah Branch").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Jeddah Branch").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Select a branch to research" })).toBeDisabled();

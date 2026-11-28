@@ -264,6 +264,7 @@ const en = {
     intentCoverageCaption: "How many customer questions have completed research",
     questionsTitle: "Customer questions",
     questionsHint: "Real questions customers may ask AI assistants about this branch.",
+    allQuestionsHint: "Combined customer questions across all connected branches.",
     openBrief: "Open brief",
     noResearchYet: "No research yet",
     noResearchYetBody: "Click Research my branch. We will generate customer questions from this branch's real business data and research them in the background.",

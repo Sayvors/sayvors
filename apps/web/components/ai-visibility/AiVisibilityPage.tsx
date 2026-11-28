@@ -330,6 +330,7 @@ export default function AiVisibilityPage() {
               selectedRunId={selectedRunId}
               onSelect={setSelectedRunId}
               copy={copy}
+              hint={copy.allQuestionsHint}
             />
           </section>
         ) : (

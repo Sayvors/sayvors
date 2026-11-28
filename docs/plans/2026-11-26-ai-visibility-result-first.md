@@ -179,7 +179,7 @@ Run: `git diff --check && git status --short`
 - [x] Result-first modal composition with top fixes, inline citations, source domains, and one evidence disclosure.
 - [x] EN/AR copy, responsive layout, keyboard/focus behavior, and evidence-row hover state.
 - [x] Frontend gate: 37 tests, TypeScript, ESLint, and production build pass.
-- [ ] Browser verification through the existing dev tunnel after integration.
+- [x] Browser verification through the existing dev tunnel after integration.
 - [ ] Authenticated staging and live-provider verification remain pending.
 
 Deviation from the original Task 2 sketch: the current backend accepts one `channel_id` per research job, so **All locations is a read-only aggregate**. Research remains branch-specific; no custom-question input or backend endpoint was added.

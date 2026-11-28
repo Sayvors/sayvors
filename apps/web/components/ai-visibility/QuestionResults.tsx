@@ -12,18 +12,20 @@ export default function QuestionResults({
   selectedRunId,
   onSelect,
   copy,
+  hint,
 }: {
   questions: AiVisibilityGeneratedQuestion[];
   selectedRunId: string | null;
   onSelect: (runId: string) => void;
   copy: Copy;
+  hint?: string;
 }) {
   if (questions.length === 0) return null;
   return (
     <section aria-label={copy.questionsTitle} className="space-y-3">
       <div>
         <p className="ai-eyebrow">{copy.questionsTitle}</p>
-        <p className="mt-1 text-[11px] text-[var(--ai-muted)]">{copy.questionsHint}</p>
+        <p className="mt-1 text-[11px] text-[var(--ai-muted)]">{hint ?? copy.questionsHint}</p>
       </div>
       <ul className="space-y-2">
         {questions.map((question) => {
