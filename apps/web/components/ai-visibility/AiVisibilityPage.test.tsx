@@ -190,6 +190,26 @@ describe("AiVisibilityPage", () => {
     expect(screen.getByRole("button", { name: "Resume research" })).toBeInTheDocument();
   });
 
+  it("shows an all-locations aggregate without starting branch research", () => {
+    channels.value = [
+      { id: "branch-1", label: "Makkah Branch" },
+      { id: "branch-2", label: "Jeddah Branch" },
+    ];
+    const aggregate = [
+      { channel: channels.value[0], data: latestData },
+      { channel: channels.value[1], data: { ...latestData, query_set: { ...latestData.query_set, channel_id: "branch-2" } } },
+    ];
+    vi.mocked(useQuery).mockReturnValue({ data: aggregate, isPending: false, isError: false } as never);
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Branch" }), {
+      target: { value: "all" },
+    });
+    expect(screen.getByRole("heading", { name: "All locations" })).toBeInTheDocument();
+    expect(screen.getAllByText("Makkah Branch").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Jeddah Branch").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Select a branch to research" })).toBeDisabled();
+  });
+
   it("does not render previous-branch data after switching branches", () => {
     channels.value = [
       { id: "branch-1", label: "Sayvors Branch" },

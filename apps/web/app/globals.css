@@ -557,6 +557,14 @@ html[lang="ar"] {
   background: var(--ai-sunken);
 }
 
+[data-evidence-row] {
+  transition: background-color var(--ai-dur) var(--ai-ease);
+}
+
+[data-evidence-row]:hover {
+  background: var(--ai-sunken);
+}
+
 .ai-status-dot {
   width: 0.5rem;
   height: 0.5rem;

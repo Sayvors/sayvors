@@ -32,7 +32,7 @@ export default function QuestionResults({
             copy.stages[question.status as keyof typeof copy.stages] ?? question.status;
           const canOpen = Boolean(question.run_id);
           return (
-            <li key={question.id}>
+            <li key={`${question.query_set_id}:${question.id}`}>
               <button
                 type="button"
                 disabled={!canOpen}

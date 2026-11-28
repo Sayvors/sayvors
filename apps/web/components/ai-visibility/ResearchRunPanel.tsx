@@ -7,8 +7,9 @@ import { fetchRun, retryRun } from "@/lib/api-ai-visibility";
 import { isActiveStatus } from "@/lib/ai-visibility-metrics";
 import { queryKeys } from "@/lib/query-keys";
 import { researchErrorMessage } from "@/lib/ai-visibility-errors";
-import DecisionBrief from "./DecisionBrief";
+import ResearchBrief from "./ResearchBrief";
 import ResearchFacts from "./ResearchFacts";
+import ResearchProgress from "./ResearchProgress";
 
 export default function ResearchRunPanel({
   runId,
@@ -107,7 +108,12 @@ export default function ResearchRunPanel({
         )}
       </div>
       {active && (
-        <div className="space-y-3">
+        <div className="space-y-4">
+          <ResearchProgress
+            status={detail.status}
+            createdAt={detail.created_at}
+            copy={copy}
+          />
           <ResearchFacts
             coverage={detail.evidence_coverage}
             copy={copy}
@@ -128,7 +134,7 @@ export default function ResearchRunPanel({
       )}
       {!active && (detail.status === "completed" || detail.status === "insufficient_evidence") && (
         <>
-          <DecisionBrief detail={detail} copy={copy} />
+          <ResearchBrief detail={detail} copy={copy} />
           <ResearchFacts
             coverage={detail.evidence_coverage}
             copy={copy}
