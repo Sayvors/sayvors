@@ -25,9 +25,9 @@ class BenchmarkConfig(Base):
     retention_days: Mapped[int] = mapped_column(Integer, default=730)
     refresh_hours: Mapped[int] = mapped_column(Integer, default=24)
     max_saved_places: Mapped[int] = mapped_column(Integer, default=50)
-    # Public Google endpoints (map search + place detail + BOQ reviews) are the
-    # default; configured paid providers remain selectable explicitly.
-    source: Mapped[str] = mapped_column(String(20), default="boq")
+    # Official Places is authoritative when configured; the runtime provider
+    # falls back to BOQ. Kept in parity with migration 20261128130000.
+    source: Mapped[str] = mapped_column(String(20), default="google_places")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
