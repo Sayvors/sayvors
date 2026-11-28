@@ -74,11 +74,11 @@ function CostLine({
   const formatted = availability === "unavailable" ? null : formatAmount(amount, currency, locale);
   return (
     <div className="rounded-[8px] bg-ink/[0.03] p-3 dark:bg-fog/[0.05]">
-      <p className="text-[11px] font-semibold text-ink/55 dark:text-fog/55">{copy.metaSpend}</p>
+      <p className="text-[11px] font-semibold text-ink/70 dark:text-fog/55">{copy.metaSpend}</p>
       <p className="mt-1 text-[18px] font-bold tabular-nums text-ink dark:text-fog">
         {formatted ?? copy.unavailableCost}
       </p>
-      <p className="mt-1 text-[11px] text-ink/50 dark:text-fog/50">
+      <p className="mt-1 text-[11px] text-ink/70 dark:text-fog/50">
         {fundingMode === "direct_client" ? copy.fundingDirect : copy.fundingSayvors}
       </p>
       {(availability === "partial" || availability === "pending") && (
@@ -100,7 +100,7 @@ function BreakdownList({ breakdowns }: { breakdowns: WhatsAppUsageResponse["brea
   ];
   const rowCount = groups.reduce((count, group) => count + group.rows.length, 0);
   if (rowCount === 0) {
-    return <p className="text-[12px] text-ink/50 dark:text-fog/50">{copy.breakdownEmpty}</p>;
+    return <p className="text-[12px] text-ink/70 dark:text-fog/50">{copy.breakdownEmpty}</p>;
   }
   const label = (row: WhatsAppSpendBreakdownRow, key: string): string => {
     if (key === "waba") return row.waba_name ?? row.waba_id ?? "—";
@@ -120,7 +120,7 @@ function BreakdownList({ breakdowns }: { breakdowns: WhatsAppUsageResponse["brea
               return (
                 <li key={`${group.key}-${label(row, group.key)}-${index}`} className="text-[11px]">
                   <p className="font-medium text-ink dark:text-fog">{label(row, group.key)}</p>
-                  <p className="mt-0.5 text-ink/50 dark:text-fog/50">
+                  <p className="mt-0.5 text-ink/70 dark:text-fog/50">
                     {copy.volume}: {row.volume.toLocaleString(locale)}
                   </p>
                   <p className={cost ? "text-ink/60 dark:text-fog/60" : "text-amber-700 dark:text-amber-300"}>
@@ -182,7 +182,7 @@ export default function WhatsAppUsageCard() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 id={titleId} className="text-[14px] font-semibold text-ink dark:text-fog">{copy.title}</h3>
-          <p className="mt-0.5 text-[11px] text-ink/45 dark:text-fog/45">{copy.approximateNote}</p>
+          <p className="mt-0.5 text-[11px] text-ink/70 dark:text-fog/45">{copy.approximateNote}</p>
         </div>
         <div>
           <label htmlFor={periodId} className="sr-only">{copy.periodLabel}</label>
@@ -201,8 +201,8 @@ export default function WhatsAppUsageCard() {
 
       {query.isPending && !data && (
         <div role="status" className="mt-4 space-y-3" aria-live="polite">
-          <p className="text-[12px] text-ink/50 dark:text-fog/50">{copy.loading}</p>
-          <div className="h-16 animate-pulse rounded-[8px] bg-ink/[0.05] dark:bg-fog/[0.06]" aria-hidden />
+          <p className="text-[12px] text-ink/70 dark:text-fog/50">{copy.loading}</p>
+          <div className="h-16 animate-pulse rounded-[8px] bg-ink/[0.05] motion-reduce:animate-none dark:bg-fog/[0.06]" aria-hidden />
         </div>
       )}
 
@@ -233,24 +233,24 @@ export default function WhatsAppUsageCard() {
           <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
             <div>
               <div className="flex items-center gap-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-ink/45 dark:text-fog/45">{copy.localUsage}</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-ink/70 dark:text-fog/45">{copy.localUsage}</p>
                 <span className="rounded-full bg-emerald-600/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
                   {query.isFetching ? copy.updating : copy.live}
                 </span>
               </div>
               <dl className="mt-3 grid grid-cols-3 gap-3">
                 <div>
-                  <dt className="text-[10px] text-ink/45 dark:text-fog/45">{copy.used}</dt>
+                  <dt className="text-[10px] text-ink/70 dark:text-fog/45">{copy.used}</dt>
                   <dd className="mt-1 text-[20px] font-bold tabular-nums text-ink dark:text-fog">{numberFormat.format(data.used)}</dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] text-ink/45 dark:text-fog/45">{copy.limit}</dt>
+                  <dt className="text-[10px] text-ink/70 dark:text-fog/45">{copy.limit}</dt>
                   <dd className="mt-1 text-[20px] font-bold tabular-nums text-ink dark:text-fog">
                     {data.limit == null ? copy.unlimited : numberFormat.format(data.limit)}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[10px] text-ink/45 dark:text-fog/45">{copy.remaining}</dt>
+                  <dt className="text-[10px] text-ink/70 dark:text-fog/45">{copy.remaining}</dt>
                   <dd className="mt-1 text-[20px] font-bold tabular-nums text-ink dark:text-fog">
                     {data.remaining == null ? copy.unlimited : numberFormat.format(data.remaining)}
                   </dd>
@@ -264,7 +264,7 @@ export default function WhatsAppUsageCard() {
                   className="mt-3 h-2 w-full overflow-hidden rounded-full accent-deep-violet"
                 />
               )}
-              <p className="mt-3 text-[11px] leading-relaxed text-ink/50 dark:text-fog/50">{copy.attemptsPolicy}</p>
+              <p className="mt-3 text-[11px] leading-relaxed text-ink/70 dark:text-fog/50">{copy.attemptsPolicy}</p>
               {data.used === 0 && (
                 <p className="mt-2 text-[12px] font-medium text-ink/60 dark:text-fog/60">{copy.noUsage}</p>
               )}
@@ -291,12 +291,12 @@ export default function WhatsAppUsageCard() {
             )}
             {lastSync && (
               <>
-                <span className="text-ink/50 dark:text-fog/50">{copy.lastSync}</span>
+                <span className="text-ink/70 dark:text-fog/50">{copy.lastSync}</span>
                 <time dateTime={data.last_meta_sync_at ?? undefined} className="font-medium text-ink/70 dark:text-fog/70">{lastSync}</time>
               </>
             )}
             {!syncing && data.sync_status !== "error" && !lastSync && (
-              <span className="text-ink/50 dark:text-fog/50">{copy.neverSynced}</span>
+              <span className="text-ink/70 dark:text-fog/50">{copy.neverSynced}</span>
             )}
           </div>
 

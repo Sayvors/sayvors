@@ -74,6 +74,14 @@ describe("WhatsAppUsageCard", () => {
     );
   });
 
+  it("uses accessible contrast for secondary quota and spend text", async () => {
+    const { container } = renderCard();
+
+    await screen.findByText("750");
+
+    expect(container.innerHTML).not.toMatch(/text-ink\/(?:45|50|55)/);
+  });
+
   it("shows a pending Meta sync without inventing a last-sync time", async () => {
     renderCard();
 
@@ -184,13 +192,14 @@ describe("WhatsAppUsageCard", () => {
 
   it("announces the initial loading state", () => {
     mockFetch.mockReturnValue(new Promise(() => {}));
-    renderCard();
+    const { container } = renderCard();
 
     expect(screen.getByRole("status")).toHaveTextContent("Loading WhatsApp usage…");
     expect(screen.getByRole("region", { name: "WhatsApp usage & spend" })).toHaveAttribute(
       "aria-busy",
       "true",
     );
+    expect(container.querySelector("[aria-hidden='true']")).toHaveClass("motion-reduce:animate-none");
   });
 
   it("reloads the selected 90-day period", async () => {
