@@ -1062,6 +1062,9 @@ class WhatsAppAdapter(MetaProviderAdapter):
             resp = await self._graph(
                 "GET", f"/{business_id}/owned_whatsapp_business_accounts", token
             )
+        except MetaAmbiguousError:
+            logger.warning("WhatsApp validate failed: interrupted provider response")
+            return False, "transient_error"
         except MetaAPIError as e:
             logger.warning("WhatsApp validate failed: graph error %s", e.status_code)
             if e.status_code in {400, 401, 403}:

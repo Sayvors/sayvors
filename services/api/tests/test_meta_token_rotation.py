@@ -175,6 +175,39 @@ async def test_validation_permanent_auth_marks_and_alerts_but_transient_does_not
     assert (await db.execute(select(func.count()).select_from(Notification))).scalar_one() == 1
 
 
+async def test_validation_success_preserves_unsupported_expiry_attention(db, user_id, monkeypatch):
+    from app.modules.channels.meta import service
+
+    conn = await _seed_reauth_connection(db, user_id)
+    conn.meta_business_id = "business-1"
+    conn.status = "error"
+    conn.token_rotation_error = "rotation_unsupported"
+    await db.commit()
+    adapter = AsyncMock()
+    adapter.validate_connection.return_value = (True, "1 WABA(s) visible")
+    monkeypatch.setattr(service, "get_adapter", lambda _provider: adapter)
+    status, _ = await service.validate_connection(db, user_id, "whatsapp")
+    assert status == "error"
+    assert conn.token_rotation_error == "rotation_unsupported"
+
+
+async def test_whatsapp_validation_treats_ambiguous_transport_as_transient(monkeypatch):
+    from app.modules.channels.meta.providers.base import MetaAmbiguousError
+    from app.modules.channels.meta.providers.whatsapp import WhatsAppAdapter
+
+    adapter = WhatsAppAdapter()
+    monkeypatch.setattr(adapter, "_graph", AsyncMock(side_effect=MetaAmbiguousError("interrupted")))
+    try:
+        ok, detail = await adapter.validate_connection(
+            SimpleNamespace(meta_business_id="business-1", connection_metadata={}),
+            {"access_token": "token"},
+        )
+        assert ok is False
+        assert detail == "transient_error"
+    finally:
+        await adapter.close()
+
+
 async def test_connection_api_exposes_coarse_health_without_credentials(client, db, user_id):
     db.add(User(
         id=user_id, first_name="Test", last_name="Tenant",

@@ -530,9 +530,12 @@ async def validate_connection(
         conn.status = "active"
         conn.last_successful_api_call_at = _utcnow()
         if provider == "whatsapp":
-            conn.token_rotation_error = None
-            conn.token_rotation_attempts = 0
-            conn.token_rotation_next_attempt_at = None
+            if conn.token_rotation_error == "rotation_unsupported":
+                conn.status = "error"
+            else:
+                conn.token_rotation_error = None
+                conn.token_rotation_attempts = 0
+                conn.token_rotation_next_attempt_at = None
     elif provider == "whatsapp":
         if detail in {"auth_rejected", "missing token"}:
             from .reauth import mark_needs_reauth
