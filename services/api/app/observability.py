@@ -175,13 +175,14 @@ def init_observability(service: str = DEFAULT_SERVICE) -> bool:
             "environment": build_environment(service),
             "release": build_release(),
             "traces_sample_rate": 0.1,
-            # No user emails/IPs by default. Opt in explicitly if ever needed.
-            "send_default_pii": False,
             "before_send": _before_send,
             "before_send_transaction": _before_send_transaction,
         }
         if _SENTRY_MAJOR < 3:
+            # Legacy 2.x options removed in Sentry 3. No user emails/IPs by
+            # default there; opt in explicitly if ever needed.
             options["profiles_sample_rate"] = 0.1
+            options["send_default_pii"] = False
         sentry_sdk.init(**options)
         _configured = True
         logger.info(

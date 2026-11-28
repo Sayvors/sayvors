@@ -1,10 +1,9 @@
 name: Deploy staging
 
 on:
-  # Deployment runs only when a PR into staging is merged. CI runs on that PR,
-  # so direct pushes to development/staging never start a workflow.
-  pull_request:
-    types: [closed]
+  # Deployment runs only after a merge to staging. Development pushes and PRs
+  # start no workflow.
+  push:
     branches: [staging]
 
 permissions:
@@ -21,7 +20,6 @@ env:
 
 jobs:
   ci-gate:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +58,6 @@ jobs:
 
   secrets-scan:
     needs: ci-gate
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +73,6 @@ jobs:
 
   build:
     needs: ci-gate
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
