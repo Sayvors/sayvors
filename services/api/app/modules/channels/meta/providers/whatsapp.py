@@ -7,10 +7,13 @@ number, and persists WABA + phone_number assets.
 """
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import time
-from datetime import datetime, timezone
+import uuid
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 
 import httpx
 
@@ -18,8 +21,8 @@ from .....config import settings
 from .....core.http import UnsafeUrlError
 from .....core.pinned_http import fetch_pinned_media
 from .base import (
-    DiscoveredAsset, MetaAPIError, MetaAmbiguousError, MetaProviderAdapter,
-    MetaTransportError, graph_base,
+    DiscoveredAsset, MetaAPIError, MetaAmbiguousError, MetaPermanentError,
+    MetaProviderAdapter, MetaTransportError, graph_base,
 )
 from ..token_rotation import parse_debug_token
 
@@ -141,7 +144,82 @@ class WhatsAppAdapter(MetaProviderAdapter):
             if match:
                 phone_number_id = match.group(1)
                 await self._wait_for_send_capacity(phone_number_id)
-        return await super()._graph(method, path, token, **kwargs)
+        payload = kwargs.get("json") or {}
+        is_message_send = (
+            method.upper() == "POST"
+            and _SEND_PATH.match(path) is not None
+            and not payload.get("typing_indicator")
+            and payload.get("status") != "read"
+        )
+        if not is_message_send:
+            return await super()._graph(method, path, token, **kwargs)
+
+        from sqlalchemy import select
+        from ..models import MetaAsset
+        from ..quota import (
+            _factory as quota_factory, current_send_key, reserve_whatsapp_send,
+        )
+
+        phone_number_id = _SEND_PATH.match(path).group(1)
+        context_id = (payload.get("context") or {}).get("message_id")
+        canonical = (
+            json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            if context_id else ""
+        )
+        send_key = current_send_key() or (
+            f"context:{hashlib.sha256(canonical.encode()).hexdigest()}"
+            if context_id else str(uuid.uuid4())
+        )
+        async with quota_factory()() as db:
+            asset = (
+                await db.execute(
+                    select(MetaAsset).where(
+                        MetaAsset.provider == "whatsapp",
+                        MetaAsset.asset_type == "phone_number",
+                        MetaAsset.external_asset_id == phone_number_id,
+                        MetaAsset.active.is_(True),
+                    )
+                )
+            ).scalar_one_or_none()
+            if asset is None:
+                raise MetaPermanentError("WhatsApp number is not connected to an active tenant asset")
+            reservation = await reserve_whatsapp_send(
+                db, asset.tenant_id, phone_number_id, send_key,
+            )
+        try:
+            response = await super()._graph(method, path, token, **kwargs)
+            messages = (response.json() or {}).get("messages") or []
+            provider_message_id = messages[0].get("id") if messages else None
+        except MetaTransportError:
+            await self._settle_quota(reservation.id, "released", failure_classification="transport_never_reached")
+            raise
+        except Exception:
+            # Meta HTTP rejections and mid-flight ambiguity may have reached the
+            # provider. Preserve the existing product policy: they count once.
+            await self._settle_quota(reservation.id, "consumed")
+            raise
+        await self._settle_quota(reservation.id, "consumed", provider_message_id=provider_message_id)
+        return response
+
+    async def _settle_quota(
+        self, reservation_id: str, outcome: str, *,
+        provider_message_id: str | None = None,
+        failure_classification: str | None = None,
+    ) -> None:
+        """Best-effort settlement after the provider attempt; never mask its result."""
+        from ..quota import _factory as quota_factory, settle_whatsapp_reservation
+
+        try:
+            async with quota_factory()() as db:
+                await settle_whatsapp_reservation(
+                    db, reservation_id, outcome,
+                    provider_message_id=provider_message_id,
+                    failure_classification=failure_classification,
+                )
+        except Exception:
+            # The reservation already counts. A settlement outage must not
+            # trigger a blind resend; status reconciliation can finish it later.
+            logger.exception("WhatsApp quota settlement failed reservation=%s", reservation_id)
 
     async def _wait_for_send_capacity(self, phone_number_id: str) -> None:
         deadline = time.monotonic() + WHATSAPP_SEND_MAX_WAIT_SECONDS
