@@ -1,5 +1,6 @@
 """WhatsApp outbound pacing: one token per message call, shared per number."""
 import math
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -56,6 +57,16 @@ def paced_redis(monkeypatch):
     monkeypatch.setattr(redis_client, "get_redis", _get_redis)
     monkeypatch.setattr(redis_client, "mark_redis_unavailable", _mark_unavailable)
     monkeypatch.setattr(settings, "TESTING", False)
+
+    async def _reserve_quota(self, phone_number_id, payload):
+        return SimpleNamespace(id="pacing-test-reservation")
+
+    async def _settle_quota(self, *args, **kwargs):
+        return None
+
+    # This suite isolates Redis pacing; quota behavior has its own DB-backed tests.
+    monkeypatch.setattr(WhatsAppAdapter, "_reserve_message_quota", _reserve_quota)
+    monkeypatch.setattr(WhatsAppAdapter, "_settle_quota", _settle_quota)
     return fake, unavailable
 
 

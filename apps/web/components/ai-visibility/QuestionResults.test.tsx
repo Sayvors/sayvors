@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import en from "@/lib/i18n/en";
+import ar from "@/lib/i18n/ar";
 import type { AiVisibilityGeneratedQuestion } from "@/lib/api-ai-visibility";
 import QuestionResults from "./QuestionResults";
 
@@ -32,6 +33,50 @@ describe("QuestionResults", () => {
     render(<QuestionResults questions={[question]} selectedRunId={null} onSelect={onSelect} copy={en.aiVisibility} />);
     fireEvent.click(screen.getByRole("button", { name: /Is Sayvors licensed/ }));
     expect(onSelect).toHaveBeenCalledWith("run1");
+  });
+
+  it("shows the branch label retained with an aggregated question", () => {
+    const aggregatedQuestion = { ...question, channel_label: "Makkah Branch" };
+    render(
+      <QuestionResults
+        questions={[aggregatedQuestion]}
+        selectedRunId={null}
+        onSelect={vi.fn()}
+        copy={en.aiVisibility}
+      />,
+    );
+
+    expect(screen.getByText("Makkah Branch")).toBeInTheDocument();
+  });
+
+  it("localizes English customer intent labels", () => {
+    render(
+      <QuestionResults
+        questions={[{ ...question, customer_intent: "product_discovery" }]}
+        selectedRunId={null}
+        onSelect={vi.fn()}
+        copy={en.aiVisibility}
+      />,
+    );
+
+    expect(screen.getByText("Product discovery")).toBeInTheDocument();
+    expect(screen.queryByText("product discovery")).not.toBeInTheDocument();
+  });
+
+  it("localizes Arabic customer intent and branch status labels", () => {
+    render(
+      <QuestionResults
+        questions={[{ ...question, customer_intent: "licensing", status: "ambiguous" }]}
+        selectedRunId={null}
+        onSelect={vi.fn()}
+        copy={ar.aiVisibility}
+      />,
+    );
+
+    expect(screen.getByText("الترخيص")).toBeInTheDocument();
+    expect(screen.queryByText("licensing")).not.toBeInTheDocument();
+    expect(screen.getByText(ar.aiVisibility.stages.ambiguous)).toBeInTheDocument();
+    expect(screen.queryByText("ambiguous")).not.toBeInTheDocument();
   });
 
   it("disables questions that have no run yet", () => {

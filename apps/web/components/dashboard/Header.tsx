@@ -171,7 +171,7 @@ export default function Header() {
           <>
             <Link
               href="/dashboard"
-              className="hidden shrink-0 rounded-[8px] text-[12px] text-ink/45 outline-none transition hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:inline dark:text-fog/45 dark:hover:text-deep-violet"
+              className="hidden shrink-0 rounded-[8px] text-[12px] text-ink/70 outline-none transition hover:text-deep-violet focus-visible:ring-2 focus-visible:ring-deep-violet/40 sm:inline dark:text-fog/70 dark:hover:text-deep-violet"
             >
               {navLabels.dashboard}
             </Link>
@@ -203,7 +203,7 @@ export default function Header() {
         onClick={() => setSearchOpen(true)}
         aria-label={t.header.searchLabel}
         title={`${t.header.searchLabel} (⌘K)`}
-        className="ms-2 hidden h-9 w-52 shrink-0 items-center gap-2 rounded-[8px] bg-deep-violet/[0.04] px-3 text-[13px] text-ink/40 outline-none transition hover:bg-deep-violet/[0.07] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/40 md:flex lg:ms-4 lg:w-64 dark:bg-fog/[0.05] dark:text-fog/40 dark:hover:bg-fog/[0.08] dark:hover:text-fog/60"
+        className="ms-2 hidden h-9 w-52 shrink-0 items-center gap-2 rounded-[8px] bg-deep-violet/[0.04] px-3 text-[13px] text-ink/70 outline-none transition hover:bg-deep-violet/[0.07] hover:text-ink/60 focus-visible:ring-2 focus-visible:ring-deep-violet/40 md:flex lg:ms-4 lg:w-64 dark:bg-fog/[0.05] dark:text-fog/70 dark:hover:bg-fog/[0.08] dark:hover:text-fog/60"
       >
         <svg
           viewBox="0 0 24 24"
@@ -218,7 +218,7 @@ export default function Header() {
           <path d="M20 20l-4-4" />
         </svg>
         <span className="flex-1 truncate text-start">{t.header.search}</span>
-        <kbd className="shrink-0 rounded-[8px] border border-deep-violet/[0.08] bg-white px-1.5 py-0.5 text-[9.5px] font-medium tabular-nums text-deep-violet/40 dark:border-fog/[0.1] dark:bg-ink dark:text-fog/40">
+        <kbd className="shrink-0 rounded-[8px] border border-deep-violet/[0.08] bg-white px-1.5 py-0.5 text-[9.5px] font-medium tabular-nums text-deep-violet/75 dark:border-fog/[0.1] dark:bg-ink dark:text-fog/75">
           ⌘K
         </kbd>
       </button>

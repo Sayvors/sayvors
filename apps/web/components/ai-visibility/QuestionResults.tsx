@@ -12,18 +12,20 @@ export default function QuestionResults({
   selectedRunId,
   onSelect,
   copy,
+  hint,
 }: {
   questions: AiVisibilityGeneratedQuestion[];
   selectedRunId: string | null;
   onSelect: (runId: string) => void;
   copy: Copy;
+  hint?: string;
 }) {
   if (questions.length === 0) return null;
   return (
     <section aria-label={copy.questionsTitle} className="space-y-3">
       <div>
         <p className="ai-eyebrow">{copy.questionsTitle}</p>
-        <p className="mt-1 text-[11px] text-[var(--ai-muted)]">{copy.questionsHint}</p>
+        <p className="mt-1 text-[11px] text-[var(--ai-muted)]">{hint ?? copy.questionsHint}</p>
       </div>
       <ul className="space-y-2">
         {questions.map((question) => {
@@ -32,7 +34,7 @@ export default function QuestionResults({
             copy.stages[question.status as keyof typeof copy.stages] ?? question.status;
           const canOpen = Boolean(question.run_id);
           return (
-            <li key={question.id}>
+            <li key={`${question.query_set_id}:${question.id}`}>
               <button
                 type="button"
                 disabled={!canOpen}
@@ -53,7 +55,16 @@ export default function QuestionResults({
                   </span>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-[var(--ai-muted)]">
-                  <span>{intentLabel(question.customer_intent)}</span>
+                  {question.channel_label && (
+                    <>
+                      <span className="font-semibold text-[var(--ai-ink-2)]">{question.channel_label}</span>
+                      <span aria-hidden="true">·</span>
+                    </>
+                  )}
+                  <span>
+                    {copy.intentLabels[question.customer_intent as keyof typeof copy.intentLabels] ??
+                      intentLabel(question.customer_intent)}
+                  </span>
                   <span aria-hidden="true">·</span>
                   <span>{stage}</span>
                   {question.mentioned != null && (

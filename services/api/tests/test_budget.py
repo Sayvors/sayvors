@@ -680,6 +680,148 @@ async def test_admin_grant_endpoint_and_budget(client, db, user_id, _allow_admin
 
 
 @pytest.mark.asyncio
+async def test_admin_enterprise_switch_grants_credit_idempotently(
+    client, db, user_id, _allow_admin_auth
+):
+    from app.modules.billing.models import BillingEvent, Plan
+    from app.modules.users.models import User
+    from app.security import create_admin_token
+
+    db.add(User(id=user_id, email="enterprise@sayvors.com", first_name="E",
+                last_name="Tenant", password_hash="x", onboarded=True))
+    db.add(Plan(
+        id="test-plan-enterprise",
+        slug="enterprise",
+        name="Enterprise",
+        included_credit_cents=100000,
+        is_active=True,
+        sort_order=4,
+    ))
+    await db.commit()
+    headers = {"Authorization": f"Bearer {create_admin_token()}"}
+    body = {"plan_slug": "enterprise", "idempotency_key": "enterprise-switch-1"}
+
+    first = client.post(
+        f"/api/v1/admin/tenants/{user_id}/grant-plan", json=body, headers=headers
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["plan_slug"] == "enterprise"
+    assert first.json()["granted_credit_cents"] == 100000
+    assert first.json()["balance_cents"] == 100000
+
+    retry = client.post(
+        f"/api/v1/admin/tenants/{user_id}/grant-plan", json=body, headers=headers
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["duplicate"] is True
+    assert retry.json()["granted_credit_cents"] == 0
+    assert retry.json()["balance_cents"] == 100000
+
+    same_plan = client.post(
+        f"/api/v1/admin/tenants/{user_id}/grant-plan",
+        json={"plan_slug": "enterprise", "idempotency_key": "enterprise-switch-2"},
+        headers=headers,
+    )
+    assert same_plan.status_code == 200, same_plan.text
+    assert same_plan.json()["granted_credit_cents"] == 0
+    assert same_plan.json()["balance_cents"] == 100000
+
+    user = await db.get(User, user_id)
+    assert user.plan == "enterprise"
+    assert user.ai_credit_cents == 100000
+    grants = (
+        await db.execute(
+            select(BillingEvent).where(
+                BillingEvent.tenant_id == user_id,
+                BillingEvent.kind == "plan_grant",
+            )
+        )
+    ).scalars().all()
+    assert len(grants) == 1
+    assert grants[0].amount_cents == 100000
+    admin_view = client.get(f"/api/v1/admin/tenants/{user_id}", headers=headers)
+    assert admin_view.json()["plan"] == "enterprise"
+    assert admin_view.json()["ai_credit_cents"] == 100000
+    tenant_view = client.get("/api/v1/billing/budget")
+    assert tenant_view.json()["plan"] == "enterprise"
+    assert tenant_view.json()["balance_cents"] == 100000
+
+
+@pytest.mark.asyncio
+async def test_zero_credit_plan_change_records_idempotent_grant(db):
+    from app.modules.billing import service as billing_service
+    from app.modules.billing.models import BillingEvent, Plan
+    from app.modules.users.models import User
+
+    uid = "budget-zero-credit-user-001"
+    db.add(User(id=uid, email="zero@sayvors.com", first_name="Z",
+                last_name="Plan", password_hash="x", onboarded=True))
+    db.add(Plan(
+        id="test-plan-zero-credit",
+        slug="zero-credit",
+        name="Zero Credit",
+        included_credit_cents=0,
+        is_active=True,
+    ))
+    await db.commit()
+
+    first = await billing_service.apply_plan_change(
+        uid, "zero-credit", granted_until=None, note=None, created_by="admin",
+        idempotency_key="zero-credit-switch-1", db=db,
+    )
+    await db.commit()
+    assert first["granted_credit_cents"] == 0
+    assert first["duplicate"] is False
+    assert first["balance_cents"] == 0
+    event = (
+        await db.execute(
+            select(BillingEvent).where(
+                BillingEvent.tenant_id == uid,
+                BillingEvent.idempotency_key == "zero-credit-switch-1",
+            )
+        )
+    ).scalar_one()
+    assert event.kind == "plan_grant"
+    assert event.amount_cents == 0
+
+    retry = await billing_service.apply_plan_change(
+        uid, "zero-credit", granted_until=None, note=None, created_by="admin",
+        idempotency_key="zero-credit-switch-1", db=db,
+    )
+    assert retry["duplicate"] is True
+    assert retry["granted_credit_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_long_catalog_plan_slug_can_be_applied(db):
+    from app.modules.billing import service as billing_service
+    from app.modules.billing.models import Plan
+    from app.modules.users.models import User
+
+    uid = "budget-long-slug-user-0001"
+    slug = "enterprise-emea-2026"
+    db.add(User(id=uid, email="long@sayvors.com", first_name="L",
+                last_name="Plan", password_hash="x", onboarded=True))
+    db.add(Plan(
+        id="test-plan-long-slug",
+        slug=slug,
+        name="Enterprise EMEA",
+        included_credit_cents=100000,
+        is_active=True,
+    ))
+    await db.commit()
+
+    result = await billing_service.apply_plan_change(
+        uid, slug, granted_until=None, note=None, created_by="admin",
+        idempotency_key="long-slug-switch-1", db=db,
+    )
+    await db.commit()
+    assert result["plan_slug"] == slug
+    user = await db.get(User, uid)
+    assert user.plan == slug
+
+
+@pytest.mark.asyncio
 async def test_cache_is_a_mirror_not_the_balance(db):
     """A poisoned cache cannot block a funded wallet; the mirror is repaired."""
     await _seed_live_wallet(db, _TENANT, 100)

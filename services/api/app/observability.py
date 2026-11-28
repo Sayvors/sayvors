@@ -24,12 +24,17 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import sentry_sdk
 
 from .config import settings
 
 logger = logging.getLogger(__name__)
+
+# Sentry 3 removed the legacy transaction-profiling option. Keep one init path
+# that works with both the 2.x deployments and 3.x CI resolution.
+_SENTRY_MAJOR = int(str(getattr(sentry_sdk, "VERSION", "0")).split(".", 1)[0] or 0)
 
 # Service name -> environment suffix reported to GlitchTip. Keeping the service
 # in the environment lets you filter `api` vs `worker` issues in the UI without
@@ -45,6 +50,24 @@ _SENSITIVE_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _SCRUBBED = "[redacted]"
+_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_QUERY_KEY_RE = re.compile(r"(^|[._-])query$", re.IGNORECASE)
+_SENSITIVE_QUERY_RE = re.compile(
+    r"(?:^|[?&\s])(?:client[_-]?secret|fb[_-]?exchange[_-]?token|"
+    r"input[_-]?token|access[_-]?token|token|api[_-]?key)=",
+    re.IGNORECASE,
+)
+
+
+def _strip_url_query(value: str) -> str:
+    """Keep a URL's origin/path while removing credential-bearing components."""
+    try:
+        parts = urlsplit(value)
+        if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+            return value
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    except ValueError:
+        return _SCRUBBED
 
 
 def _git_sha() -> str | None:
@@ -87,16 +110,26 @@ def build_environment(service: str) -> str:
 
 
 def _scrub(value: Any, _depth: int = 0) -> Any:
-    """Recursively redact sensitive-looking values in event payloads."""
+    """Recursively redact secrets and URL queries in event payloads."""
     if _depth > 6:
-        return value
+        return _SCRUBBED
     if isinstance(value, dict):
         return {
-            k: (_SCRUBBED if _SENSITIVE_KEY_RE.search(str(k)) else _scrub(v, _depth + 1))
+            k: (
+                _SCRUBBED
+                if _SENSITIVE_KEY_RE.search(str(k)) or _QUERY_KEY_RE.search(str(k))
+                else _scrub(v, _depth + 1)
+            )
             for k, v in value.items()
         }
     if isinstance(value, list):
         return [_scrub(v, _depth + 1) for v in value]
+    if isinstance(value, str):
+        cleaned = _URL_RE.sub(lambda match: _strip_url_query(match.group(0)), value)
+        # HTTPX integrations can emit query text without a URL (http.query /
+        # url.query or exception args). Redact the whole value when it carries a
+        # credential parameter rather than trying to preserve untrusted syntax.
+        return _SCRUBBED if _SENSITIVE_QUERY_RE.search(cleaned) else cleaned
     return value
 
 
@@ -108,6 +141,11 @@ def _before_send(event: dict, hint: dict) -> dict | None:
         # fail during restarts; surfacing them buries real issues.
         if getattr(exc_type, "__name__", "") in {"ConnectionRefusedError"} and exc_value:
             return None
+    return _scrub(event)
+
+
+def _before_send_transaction(event: dict, hint: dict) -> dict | None:
+    """Apply the same recursive secret sanitation to performance events."""
     return _scrub(event)
 
 
@@ -132,16 +170,19 @@ def init_observability(service: str = DEFAULT_SERVICE) -> bool:
         return True
 
     try:
-        sentry_sdk.init(
-            dsn=dsn,
-            environment=build_environment(service),
-            release=build_release(),
-            traces_sample_rate=0.1,
-            profiles_sample_rate=0.1,
+        options: dict[str, Any] = {
+            "dsn": dsn,
+            "environment": build_environment(service),
+            "release": build_release(),
+            "traces_sample_rate": 0.1,
             # No user emails/IPs by default. Opt in explicitly if ever needed.
-            send_default_pii=False,
-            before_send=_before_send,
-        )
+            "send_default_pii": False,
+            "before_send": _before_send,
+            "before_send_transaction": _before_send_transaction,
+        }
+        if _SENTRY_MAJOR < 3:
+            options["profiles_sample_rate"] = 0.1
+        sentry_sdk.init(**options)
         _configured = True
         logger.info(
             "GlitchTip initialised: service=%s environment=%s release=%s",

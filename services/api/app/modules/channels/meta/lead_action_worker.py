@@ -84,6 +84,8 @@ async def _send_nudge(db, action: LeadAction, text: str) -> str:
     propagates MetaAPIError / httpx errors for the caller's taxonomy."""
     from .consumer import _resolve_asset
     from .credentials import decrypt_connection_token
+    from .reauth import handle_meta_auth_failure
+    from .quota import whatsapp_send_key
     from .service import get_adapter, get_instagram_page_credentials
 
     channel = (
@@ -99,14 +101,24 @@ async def _send_nudge(db, action: LeadAction, text: str) -> str:
             raise _PermanentSendError(f"asset {channel.platform_user_id} missing")
         if not asset.active:
             raise _PermanentSendError("asset deselected")
+        expected_ciphertext = (
+            asset.connection.access_token_encrypted if asset.connection else None
+        )
         token = (
             decrypt_connection_token(asset.connection) if asset.connection else None
         )
         if not token:
             raise _PermanentSendError("no access token on connection")
-        return await adapter.send_text_message(
-            channel.platform_user_id, token, action.contact_id, text
-        )
+        try:
+            with whatsapp_send_key(f"lead-action:{action.id}"):
+                return await adapter.send_text_message(
+                    channel.platform_user_id, token, action.contact_id, text
+                )
+        except MetaAPIError as exc:
+            await handle_meta_auth_failure(
+                db, asset.connection, exc, expected_ciphertext=expected_ciphertext,
+            )
+            raise
 
     if action.platform == "instagram":
         from .providers.instagram import InstagramAdapter
@@ -296,13 +308,13 @@ async def _process_action(db, action: LeadAction) -> None:
             # our check and the send.
             action.status = "ineligible"
             action.ineligible_reason = "window_closed"
-            action.last_error = str(e)[:500]
+            action.last_error = e.public[:500]
         elif e.status_code == 429 or e.status_code >= 500:
-            _requeue_transient(action, f"{e.status_code}: {e}")
+            _requeue_transient(action, f"{e.status_code}: {e.public}")
         else:
             action.status = "failed"
             action.error_category = "permanent"
-            action.last_error = f"{e.status_code}: {e}"[:500]
+            action.last_error = f"{e.status_code}: {e.public}"[:500]
         return
     except MetaAmbiguousError as e:
         # _graph raises this instead of a raw read-timeout: the request may

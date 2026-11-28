@@ -468,9 +468,12 @@ async def send_handover(db, lead, adapter, phone_number_id: str, token: str,
         return
     text = URGENT_HANDOVER_TEXT if urgent else HANDOVER_TEXT
     try:
-        provider_msg_id = await adapter.send_text_message(
-            phone_number_id, token, lead.contact_id, text
-        )
+        from .quota import whatsapp_send_key
+
+        with whatsapp_send_key(f"handover:{lead.id}"):
+            provider_msg_id = await adapter.send_text_message(
+                phone_number_id, token, lead.contact_id, text
+            )
         lead.handover_sent_at = _now()
     except Exception as e:
         logger.warning("handover line failed for lead %s: %s", lead.id, e)

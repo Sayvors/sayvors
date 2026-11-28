@@ -4,6 +4,8 @@ import { apiFetch } from "./api-rag";
 
 export type MetaProvider = "whatsapp" | "facebook" | "instagram";
 
+export type MetaTokenHealth = "healthy" | "rotating" | "reauth_required";
+
 export interface MetaConnection {
   id: string;
   provider: MetaProvider;
@@ -14,6 +16,9 @@ export interface MetaConnection {
   last_validated_at: string | null;
   last_successful_api_call_at: string | null;
   last_webhook_received_at: string | null;
+  token_expires_at: string | null;
+  token_last_rotated_at: string | null;
+  token_health: MetaTokenHealth;
   created_at: string;
 }
 

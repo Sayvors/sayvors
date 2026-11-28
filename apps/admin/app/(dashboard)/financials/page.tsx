@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { fetchFinancials, patchFinance, type FinanceResponse, type FinanceRow } from "@/lib/admin-api";
+import WhatsAppSpendPanel from "@/components/financials/WhatsAppSpendPanel";
 
 /* Admin financials: per-tenant monthly finance rows + rollups. Admin marks
  * paid, sets collected amounts and adds extra-cost adjustments/notes. */
@@ -123,6 +124,8 @@ export default function FinancialsPage() {
         {card("Margin (billed − cost)", totals ? fmtMicro(totals.margin_micro) : "—",
           (totals?.margin_micro ?? 0) >= 0)}
       </div>
+
+      <WhatsAppSpendPanel />
 
       <div className="panel overflow-x-auto">
         <table className="w-full text-[12px]">

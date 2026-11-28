@@ -203,6 +203,7 @@ export default function Sidebar() {
       <aside
         id="dashboard-sidebar"
         aria-hidden={isMobile && !drawerOpen ? true : undefined}
+        inert={isMobile && !drawerOpen}
         className={`flex shrink-0 flex-col bg-white text-ink ring-1 ring-ink/[0.06] transition-all duration-200 dark:bg-[#1d1636] dark:text-fog dark:ring-white/[0.08] ${
           isMobile
             ? `fixed inset-y-2 start-2 z-50 w-[264px] rounded-[8px] shadow-2xl ${
@@ -625,7 +626,7 @@ function UsageCard({ rail }: { rail: boolean }) {
   return (
     <div className="relative overflow-hidden rounded-[8px] bg-violet-soft p-3 text-ink">
       <div className="flex items-start justify-between gap-2">
-        <p className="pt-0.5 text-[10px] font-semibold text-ink/50">{t.sidebar.plan}</p>
+        <p className="pt-0.5 text-[10px] font-semibold text-ink">{t.sidebar.plan}</p>
         <Link
           href="/dashboard/billing"
           aria-label={planLabel}
@@ -648,7 +649,7 @@ function UsageCard({ rail }: { rail: boolean }) {
           </Link>
           <Link
             href={hasPlan ? "/dashboard/usage" : "/dashboard/billing"}
-            className="mt-0.5 block truncate rounded-[8px] text-[10.5px] font-medium tabular-nums text-ink/55 outline-none transition hover:text-ink/80 focus-visible:ring-2 focus-visible:ring-ink/30"
+            className="mt-0.5 block truncate rounded-[8px] text-[10.5px] font-medium tabular-nums text-ink outline-none transition hover:text-ink/80 focus-visible:ring-2 focus-visible:ring-ink/30"
           >
             {hasCredit ? `$${budget.balance_dollars.toFixed(2)} ${t.sidebar.creditLeft}` : t.sidebar.freeHint}
           </Link>

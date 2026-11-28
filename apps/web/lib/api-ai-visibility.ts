@@ -181,6 +181,8 @@ export type AiVisibilityGeneratedQuestion = {
   version: number;
   question_key: string;
   question_text: string;
+  /** Added by the frontend when questions are aggregated across branches. */
+  channel_label?: string;
   language: string;
   customer_intent: string;
   industry_relevance: number;

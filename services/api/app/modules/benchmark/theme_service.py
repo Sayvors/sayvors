@@ -22,6 +22,9 @@ from .models import BenchmarkThemeAnalysis
 from .theme_extraction import THEME_EXTRACTOR_VERSION, extract_local_themes, group_theme_comparison, normalize_theme_key
 
 MAX_SAMPLE_REVIEWS = 50
+# Opt-in full-history mode: still bounded so one analysis row cannot grow
+# without limit at 1M+ tenant scale.
+MAX_SAMPLE_REVIEWS_FULL = 2000
 MAX_REVIEW_TEXT = 600
 VALID_SENTIMENTS = {"positive", "neutral", "negative"}
 RETRY_COOLDOWN_SECONDS = 300
@@ -68,7 +71,9 @@ def _sentiment(stored: Any, rating: int | float | None) -> str:
     return "negative"
 
 
-def normalize_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def normalize_reviews(
+    reviews: list[dict[str, Any]], *, limit: int = MAX_SAMPLE_REVIEWS
+) -> list[dict[str, Any]]:
     """Bound provider/analytics rows and synthesize stable ids when absent."""
     normalized: list[dict[str, Any]] = []
     duplicate_counts: dict[str, int] = {}
@@ -110,7 +115,7 @@ def normalize_reviews(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "author_photo": photo,
             "reviewed_at": reviewed_at,
         })
-        if len(normalized) >= MAX_SAMPLE_REVIEWS:
+        if len(normalized) >= limit:
             break
     return normalized
 
@@ -126,6 +131,15 @@ def hash_sample(reviews: list[dict[str, Any]]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+async def _sample_limit(db: AsyncSession) -> int:
+    """Recent mode stays at 50; full-history mode uses the admin ceiling."""
+    config = await service.get_config(db)
+    if getattr(config, "review_history_mode", "recent") != "full":
+        return MAX_SAMPLE_REVIEWS
+    configured = getattr(config, "max_reviews_per_place", MAX_SAMPLE_REVIEWS)
+    return max(MAX_SAMPLE_REVIEWS, min(int(configured), MAX_SAMPLE_REVIEWS_FULL))
+
+
 async def build_subject_sample(
     db: AsyncSession, tenant_id: str, raw_subject: str
 ) -> dict[str, Any] | None:
@@ -135,11 +149,13 @@ async def build_subject_sample(
     except compare.CompareError:
         return None
 
+    limit = await _sample_limit(db)
+
     if kind == "saved":
         saved = await service.get_saved(db, tenant_id, external_id)
         if saved is None:
             return None
-        reviews = normalize_reviews(list(saved.reviews or []))
+        reviews = normalize_reviews(list(saved.reviews or []), limit=limit)
         return {
             "key": str(raw_subject),
             "kind": kind,
@@ -172,7 +188,7 @@ async def build_subject_sample(
                 ReviewInsight.user_id == tenant_id,
                 ReviewInsight.channel_id == external_id,
                 ReviewInsight.removed_at.is_(None),
-            ).order_by(published.desc(), ReviewInsight.id.desc()).limit(MAX_SAMPLE_REVIEWS)
+            ).order_by(published.desc(), ReviewInsight.id.desc()).limit(limit)
         )
     ).all()
     reviews = normalize_reviews([
@@ -187,7 +203,7 @@ async def build_subject_sample(
             "reviewed_at": row.published,
         }
         for row in rows
-    ])
+    ], limit=limit)
     return {
         "key": str(raw_subject),
         "kind": kind,

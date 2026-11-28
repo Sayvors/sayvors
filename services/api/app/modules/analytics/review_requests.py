@@ -110,7 +110,10 @@ def render_template(body: str | None, name: str | None, link: str | None) -> str
     return body.replace("{name}", name or "there").replace("{link}", link or "")
 
 
-async def send_whatsapp_text(db: AsyncSession, user_id: str, to: str, text: str) -> str:
+async def send_whatsapp_text(
+    db: AsyncSession, user_id: str, to: str, text: str,
+    *, idempotency_key: str | None = None,
+) -> str:
     """Send through the tenant's connected WhatsApp Cloud API number.
 
     Raises when no number is connected or Meta rejects the send. The caller
@@ -136,6 +139,11 @@ async def send_whatsapp_text(db: AsyncSession, user_id: str, to: str, text: str)
     if not token:
         raise RuntimeError("WhatsApp credentials are not available.")
     adapter = get_adapter("whatsapp")
+    if idempotency_key:
+        from ..channels.meta.quota import whatsapp_send_key
+
+        with whatsapp_send_key(f"review-request:{idempotency_key}"):
+            return await adapter.send_text_message(asset.external_asset_id, token, to, text)
     return await adapter.send_text_message(asset.external_asset_id, token, to, text)
 
 
@@ -152,7 +160,10 @@ async def deliver_request(db: AsyncSession, row: ReviewRequest) -> ReviewRequest
         try:
             if not row.contact:
                 raise RuntimeError("Missing WhatsApp number.")
-            await send_whatsapp_text(db, row.user_id, row.contact, message)
+            await send_whatsapp_text(
+                db, row.user_id, row.contact, message,
+                idempotency_key=row.id,
+            )
             row.status = "sent"
             row.sent_via = "whatsapp"
             row.error = None

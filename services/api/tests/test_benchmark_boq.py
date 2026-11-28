@@ -267,19 +267,22 @@ async def test_get_place_composes_metadata_and_deep_reviews(monkeypatch):
             "photos": [], "reviews_per_score": None, "source": "placedetail",
         }
 
-    async def fake_reviews(feature, *, max_reviews, days, client=None):
-        called["reviews"] = {"feature": feature, "max_reviews": max_reviews, "days": days}
+    async def fake_reviews(feature, *, max_reviews, days, full_history=False, client=None):
+        called["reviews"] = {
+            "feature": feature, "max_reviews": max_reviews,
+            "days": days, "full_history": full_history,
+        }
         return deep
 
     monkeypatch.setattr(placedetail, "get_place", fake_details)
     monkeypatch.setattr(boq, "fetch_reviews", fake_reviews)
 
-    place = await boq.get_place(PLACE_ID, maps_url=MAPS_URL, reviews_limit=500)
+    place = await boq.get_place(PLACE_ID, maps_url=MAPS_URL, reviews_limit=250)
 
     assert called["detail"] == FTID
     assert called["reviews"] == {
-        "feature": FTID, "max_reviews": 500,
-        "days": boq.DEFAULT_REVIEW_WINDOW_DAYS,
+        "feature": FTID, "max_reviews": 250,
+        "days": boq.DEFAULT_REVIEW_WINDOW_DAYS, "full_history": False,
     }
     assert place["name"] == "Wahmy Burger"
     assert place["rating"] == 4.4

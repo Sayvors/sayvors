@@ -160,6 +160,8 @@ def _profile_out(
 
 
 def _conn_out(c) -> MetaConnectionOut:
+    from .token_rotation import token_health
+
     return MetaConnectionOut(
         id=c.id,
         provider=c.provider,
@@ -167,6 +169,14 @@ def _conn_out(c) -> MetaConnectionOut:
         meta_business_id=c.meta_business_id,
         scopes=list(c.scopes or []),
         status=c.status,
+        token_expires_at=(
+            c.token_expires_at.isoformat() if getattr(c, "token_expires_at", None) else None
+        ),
+        token_last_rotated_at=(
+            c.token_last_rotated_at.isoformat()
+            if getattr(c, "token_last_rotated_at", None) else None
+        ),
+        token_health=token_health(c),
         last_validated_at=c.last_validated_at.isoformat() if c.last_validated_at else None,
         last_successful_api_call_at=c.last_successful_api_call_at.isoformat()
         if c.last_successful_api_call_at
@@ -584,7 +594,18 @@ async def whatsapp_session(
     try:
         if body.code:
             exchanged = await adapter.exchange_code(body.code)
-            credentials["access_token"] = exchanged.get("access_token", "")
+            # Keep the complete provider payload through classification. The
+            # token itself is encrypted by store_connection and never persisted
+            # in connection_metadata.
+            credentials.update(exchanged)
+            credentials["business_id"] = body.business_id or exchanged.get("business_id")
+            credentials["waba_id"] = body.waba_id or exchanged.get("waba_id")
+            credentials["phone_number_id"] = (
+                body.phone_number_id or exchanged.get("phone_number_id")
+            )
+            from .token_rotation import prepare_whatsapp_credentials
+
+            credentials = await prepare_whatsapp_credentials(adapter, credentials)
         conn = await _service.store_connection(db, tenant_id, "whatsapp", credentials)
         discovered = await adapter.discover_assets(credentials)
         assets = await _service.save_discovered_assets(

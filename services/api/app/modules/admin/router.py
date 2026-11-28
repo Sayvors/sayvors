@@ -5,6 +5,7 @@ GET    /api/v1/admin/me      session check (also proves the gate works)
 """
 import logging
 from datetime import datetime, timezone
+from typing import Literal
 
 import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
@@ -316,6 +317,9 @@ class BenchmarkConfigIn(BaseModel):
     retention_days: int | None = Field(default=None, ge=7, le=3650)
     max_saved_places: int | None = Field(default=None, ge=1, le=500)
     place_cache_enabled: bool | None = None
+    review_history_mode: Literal["recent", "full"] | None = None
+    max_reviews_per_place: int | None = Field(default=None, ge=10, le=20_000)
+    full_history_batch: int | None = Field(default=None, ge=1, le=10)
 
 
 class PlatformConfigIn(BaseModel):
@@ -2531,6 +2535,26 @@ async def list_plan_features(_admin=Depends(require_admin)):
     return feature_catalog_as_dicts()
 
 
+@router.get("/whatsapp-spend")
+async def admin_whatsapp_spend(
+    days: int = Query(30, ge=1, le=365),
+    tenant_id: str | None = Query(None, max_length=36),
+    waba_id: str | None = Query(None, max_length=100),
+    _admin: dict = Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin-only tenant/WABA spend; client-direct cost is excluded from COGS."""
+    from ..channels.meta.spend_api import admin_spend
+
+    try:
+        return await admin_spend(
+            db, days=days, tenant_id=tenant_id, waba_id=waba_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("/financials")
 async def admin_financials(
     month: str = Query(..., pattern="^\\d{4}-\\d{2}$"),
@@ -2947,44 +2971,63 @@ async def get_tenant_subscription(tenant_id: str, _admin=Depends(require_admin))
 
 
 @router.post("/tenants/{tenant_id}/grant-plan", response_model=SubscriptionOut)
-async def grant_plan(tenant_id: str, body: GrantPlanIn, _admin=Depends(require_admin)):
-    from ...database import async_session
+async def grant_plan(
+    tenant_id: str,
+    body: GrantPlanIn,
+    _admin=Depends(require_admin),
+    _rate_limit: None = Depends(admin_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    from ..billing import service as billing_service
+    from ..billing.budget import sync_balance
 
-    async with async_session() as db:
-        plan = (
-            await db.execute(_select(Plan).where(Plan.slug == body.plan_slug))
-        ).scalar_one_or_none()
-        if plan is None:
-            raise HTTPException(status_code=404, detail="Plan not found.")
-        existing = (
-            await db.execute(
-                _select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id)
-            )
-        ).scalar_one_or_none()
-        if existing is None:
-            sub = TenantSubscription(
-                tenant_id=tenant_id,
-                plan_id=plan.id,
-                status="active",
-                granted_by=_admin.get("username") or "admin",
-                granted_until=body.granted_until,
-            )
-            db.add(sub)
-        else:
-            existing.plan_id = plan.id
-            existing.status = "active"
-            existing.granted_by = _admin.get("username") or "admin"
-            existing.granted_until = body.granted_until
-            sub = existing
-        await db.commit()
-        await db.refresh(sub)
-        return SubscriptionOut(
-            id=sub.id, tenant_id=sub.tenant_id, plan_id=sub.plan_id,
-            plan_slug=plan.slug, plan_name=plan.name, status=sub.status,
-            period_start=sub.period_start, period_end=sub.period_end,
-            granted_by=sub.granted_by, granted_until=sub.granted_until,
-            features_override=dict(sub.features_override or {}),
+    try:
+        result = await billing_service.apply_plan_change(
+            tenant_id,
+            body.plan_slug,
+            granted_until=body.granted_until,
+            note=body.note,
+            created_by=_admin.get("username") or "admin",
+            idempotency_key=body.idempotency_key,
+            db=db,
         )
+        await db.commit()
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=404 if "not found" in str(exc).lower() else 400,
+            detail=str(exc),
+        ) from exc
+
+    if result["granted_credit_cents"] > 0:
+        synced = await sync_balance(tenant_id, result["balance_cents"])
+        if not synced:
+            logger.warning(
+                "Plan grant committed; Redis mirror sync failed: tenant=%s balance=%s¢",
+                tenant_id,
+                result["balance_cents"],
+            )
+    sub = (
+        await db.execute(
+            _select(TenantSubscription).where(TenantSubscription.tenant_id == tenant_id)
+        )
+    ).scalar_one()
+    return SubscriptionOut(
+        id=sub.id,
+        tenant_id=sub.tenant_id,
+        plan_id=sub.plan_id,
+        plan_slug=result["plan_slug"],
+        plan_name=result["plan_name"],
+        status=sub.status,
+        period_start=sub.period_start,
+        period_end=sub.period_end,
+        granted_by=sub.granted_by,
+        granted_until=sub.granted_until,
+        features_override=dict(sub.features_override or {}),
+        granted_credit_cents=result["granted_credit_cents"],
+        balance_cents=result["balance_cents"],
+        duplicate=result["duplicate"],
+    )
 
 
 @router.put("/tenants/{tenant_id}/features", response_model=SubscriptionOut)

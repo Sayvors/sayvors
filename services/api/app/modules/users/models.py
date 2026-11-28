@@ -106,7 +106,7 @@ class User(Base):
     country: Mapped[str | None] = mapped_column(String(8), nullable=True)
     # Plan + AI credit balance (P0 billing gate): plan ∈ {free, pro};
     # ai_credit_cents is a USD-cent balance spent by every AI task.
-    plan: Mapped[str] = mapped_column(String(16), default="free")
+    plan: Mapped[str] = mapped_column(String(40), default="free")
     ai_credit_cents: Mapped[int] = mapped_column(Integer, default=0)
     # Access-token generation: bumped on password change / logout-all so
     # previously issued access tokens are rejected (G1 revocation).

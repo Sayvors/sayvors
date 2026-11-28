@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
 }));
 const channels = vi.hoisted(() => ({ value: [] as Array<{ id: string; label: string }> }));
 const query = vi.hoisted(() => ({ invalidateQueries: vi.fn() }));
+const i18n = vi.hoisted(() => ({ locale: "en" }));
 
 vi.mock("@/lib/api-ai-visibility", () => api);
 vi.mock("./ResearchRunPanel", () => ({
@@ -26,10 +27,19 @@ vi.mock("@/lib/i18n/I18nProvider", async () => {
     "@/lib/i18n/I18nProvider",
   );
   const en = await vi.importActual<typeof import("@/lib/i18n/en")>("@/lib/i18n/en");
-  return { ...actual, useI18n: () => ({ locale: "en", dir: "ltr", t: en.default }) };
+  const ar = await vi.importActual<typeof import("@/lib/i18n/ar")>("@/lib/i18n/ar");
+  return {
+    ...actual,
+    useI18n: () => ({
+      locale: i18n.locale,
+      dir: i18n.locale === "ar" ? "rtl" : "ltr",
+      t: i18n.locale === "ar" ? ar.default : en.default,
+    }),
+  };
 });
 
 import { useQuery } from "@tanstack/react-query";
+import ar from "@/lib/i18n/ar";
 import AiVisibilityPage from "./AiVisibilityPage";
 
 const latestData = {
@@ -97,6 +107,7 @@ const latestData = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  i18n.locale = "en";
   channels.value = [];
   query.invalidateQueries.mockResolvedValue(undefined);
   api.fetchLatestQuerySet.mockResolvedValue(latestData);
@@ -172,6 +183,7 @@ describe("AiVisibilityPage", () => {
     trigger.focus();
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveClass("rounded-[var(--ai-radius-panel)]");
     expect(screen.getByText("Brief for run-1")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -188,6 +200,295 @@ describe("AiVisibilityPage", () => {
     vi.mocked(useQuery).mockReturnValue({ data: partial, isPending: false, isError: false } as never);
     render(<AiVisibilityPage />);
     expect(screen.getByRole("button", { name: "Resume research" })).toBeInTheDocument();
+  });
+
+  it("shows an all-locations aggregate without starting branch research", () => {
+    channels.value = [
+      { id: "branch-1", label: "Makkah Branch" },
+      { id: "branch-2", label: "Jeddah Branch" },
+    ];
+    const aggregate = [
+      { channel: channels.value[0], data: latestData, error: null },
+      { channel: channels.value[1], data: {
+        ...latestData,
+        query_set: { ...latestData.query_set, id: "qs-2", channel_id: "branch-2" },
+        questions: [{ ...latestData.questions[0], id: "question-2", query_set_id: "qs-2" }],
+      }, error: null },
+    ];
+    vi.mocked(useQuery).mockReturnValue({ data: aggregate, isPending: false, isError: false } as never);
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Branch" }), {
+      target: { value: "all" },
+    });
+    expect(screen.getByRole("heading", { name: "All locations" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("Combined customer questions across all connected branches.")).toBeInTheDocument();
+    expect(screen.getAllByText("Makkah Branch").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Jeddah Branch").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Select a branch to research" })).toBeDisabled();
+  });
+
+  it("localizes aggregate intent labels in Arabic", () => {
+    i18n.locale = "ar";
+    channels.value = [
+      { id: "branch-1", label: "فرع مكة" },
+      { id: "branch-2", label: "فرع جدة" },
+    ];
+    vi.mocked(useQuery).mockReturnValue({
+      data: channels.value.map((channel, index) => ({
+        channel,
+        data: {
+          ...latestData,
+          query_set: { ...latestData.query_set, id: `qs-${index + 1}`, channel_id: channel.id },
+          questions: [{ ...latestData.questions[0], id: `question-${index + 1}`, query_set_id: `qs-${index + 1}` }],
+        },
+        error: null,
+      })),
+      isPending: false,
+      isError: false,
+    } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: ar.aiVisibility.branch }), {
+      target: { value: "all" },
+    });
+
+    expect(screen.getAllByText("الترخيص")).toHaveLength(2);
+    expect(screen.queryByText("licensing")).not.toBeInTheDocument();
+    expect(screen.getAllByText(ar.aiVisibility.stages.completed).length).toBeGreaterThan(0);
+  });
+
+  it("maps branch version statuses through localized stages", () => {
+    channels.value = [{ id: "branch-1", label: "Sayvors Branch" }];
+    const versioned = {
+      ...latestData,
+      versions: [
+        { ...latestData.versions[0], status: "completed" },
+        { ...latestData.versions[0], id: "qs-old", version: 2, status: "failed" },
+      ],
+    };
+    vi.mocked(useQuery).mockReturnValue({ data: versioned, isPending: false, isError: false } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.click(screen.getByText("How we chose these questions"));
+
+    expect(screen.getByText(/Version history: v1 \(Completed\) · v2 \(Failed\)/)).toBeInTheDocument();
+  });
+
+  it("shows loading instead of an empty state while all-locations research is pending", () => {
+    channels.value = [
+      { id: "branch-1", label: "Makkah Branch" },
+      { id: "branch-2", label: "Jeddah Branch" },
+    ];
+    vi.mocked(useQuery).mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Branch" }), {
+      target: { value: "all" },
+    });
+
+    expect(screen.getByRole("status", { name: "Loading research…" })).toBeInTheDocument();
+    expect(screen.queryByText("No research yet")).not.toBeInTheDocument();
+  });
+
+  it("renders a retryable error when every all-locations branch fails to load", () => {
+    channels.value = [
+      { id: "branch-1", label: "Makkah Branch" },
+      { id: "branch-2", label: "Jeddah Branch" },
+    ];
+    const refetch = vi.fn();
+    vi.mocked(useQuery).mockReturnValue({
+      data: channels.value.map((channel) => ({
+        channel,
+        data: null,
+        error: new Error("Network unavailable"),
+      })),
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch,
+    } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Branch" }), {
+      target: { value: "all" },
+    });
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Could not load research.");
+    expect(screen.queryByText("No research yet")).not.toBeInTheDocument();
+    fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it("shows the all-locations empty state only when every branch has no query set", () => {
+    channels.value = [
+      { id: "branch-1", label: "Makkah Branch" },
+      { id: "branch-2", label: "Jeddah Branch" },
+    ];
+    vi.mocked(useQuery).mockReturnValue({
+      data: channels.value.map((channel) => ({
+        channel,
+        data: null,
+        error: new Error("query_set_not_found"),
+      })),
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Branch" }), {
+      target: { value: "all" },
+    });
+
+    expect(screen.getByText("No research yet")).toBeInTheDocument();
+    expect(screen.getByText("No connected branch has completed research yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps successful aggregate data visible alongside a retryable partial failure", () => {
+    channels.value = [
+      { id: "branch-1", label: "Makkah Branch" },
+      { id: "branch-2", label: "Jeddah Branch" },
+    ];
+    const refetch = vi.fn();
+    vi.mocked(useQuery).mockReturnValue({
+      data: [
+        { channel: channels.value[0], data: latestData, error: null },
+        { channel: channels.value[1], data: null, error: new Error("Network unavailable") },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch,
+    } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Branch" }), {
+      target: { value: "all" },
+    });
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Some locations could not be loaded. Results are incomplete.");
+    expect(screen.getByRole("region", { name: "Evidence coverage" })).toBeInTheDocument();
+    expect(screen.getAllByText("Makkah Branch").length).toBeGreaterThan(0);
+    expect(screen.getByText("Is Sayvors licensed in Makkah?")).toBeInTheDocument();
+    fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it("preserves each branch error in the all-locations query result", async () => {
+    channels.value = [
+      { id: "branch-1", label: "Makkah Branch" },
+      { id: "branch-2", label: "Jeddah Branch" },
+    ];
+    const branchError = new Error("Jeddah is unavailable");
+    api.fetchLatestQuerySet.mockImplementation((channelId: string) =>
+      channelId === "branch-1"
+        ? Promise.resolve(latestData)
+        : Promise.reject(branchError),
+    );
+    vi.mocked(useQuery).mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Branch" }), {
+      target: { value: "all" },
+    });
+    const options = vi.mocked(useQuery).mock.calls.at(-1)![0];
+    const queryFn = options.queryFn as (context: unknown) => Promise<unknown>;
+    const rows = await queryFn({}) as Array<{
+      channel: { id: string };
+      data: unknown;
+      error: unknown;
+    }>;
+
+    expect(rows[0]).toMatchObject({ channel: { id: "branch-1" }, data: latestData, error: null });
+    expect(rows[1]).toMatchObject({ channel: { id: "branch-2" }, data: null, error: branchError });
+  });
+
+  it("retains branch labels in aggregate question rows and modal context", () => {
+    channels.value = [
+      { id: "branch-1", label: "Makkah Branch" },
+      { id: "branch-2", label: "Jeddah Branch" },
+    ];
+    vi.mocked(useQuery).mockReturnValue({
+      data: [
+        { channel: channels.value[0], data: latestData, error: null },
+        {
+          channel: channels.value[1],
+          data: {
+            ...latestData,
+            query_set: { ...latestData.query_set, id: "qs-2", channel_id: "branch-2" },
+            questions: [{
+              ...latestData.questions[0],
+              id: "question-2",
+              query_set_id: "qs-2",
+              question_text: "Does Sayvors serve Jeddah?",
+              run_id: "run-2",
+            }],
+          },
+          error: null,
+        },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Branch" }), {
+      target: { value: "all" },
+    });
+
+    const makkahQuestion = screen.getByRole("button", { name: /Is Sayvors licensed/ });
+    expect(within(makkahQuestion).getByText("Makkah Branch")).toBeInTheDocument();
+    const jeddahQuestion = screen.getByRole("button", { name: /Does Sayvors serve Jeddah/ });
+    expect(within(jeddahQuestion).getByText("Jeddah Branch")).toBeInTheDocument();
+    fireEvent.click(jeddahQuestion);
+    expect(screen.getByRole("dialog", { name: "Decision brief" })).toHaveAccessibleDescription(
+      "Jeddah Branch · Does Sayvors serve Jeddah?",
+    );
+  });
+
+  it("localizes all-locations branch-card status values", () => {
+    channels.value = [{ id: "branch-1", label: "Makkah Branch" }];
+    vi.mocked(useQuery).mockReturnValue({
+      data: [{
+        channel: channels.value[0],
+        data: {
+          ...latestData,
+          query_set: { ...latestData.query_set, status: "partial" },
+        },
+        error: null,
+      }],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as never);
+
+    render(<AiVisibilityPage />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Branch" }), {
+      target: { value: "all" },
+    });
+
+    expect(screen.getByText(/Version 1 · Some questions could not be researched/)).toBeInTheDocument();
+    expect(screen.queryByText("partial")).not.toBeInTheDocument();
   });
 
   it("does not render previous-branch data after switching branches", () => {

@@ -401,7 +401,9 @@ async def test_saving_with_search_metadata_keeps_the_photo_and_is_ready(client, 
 async def test_get_config_includes_source(client, db):
     res = client.get("/api/v1/benchmark/config")
     assert res.status_code == 200, res.text
-    assert res.json()["source"] == "boq"
+    # Official Places is the production default; the runtime falls back to
+    # BOQ when no key is configured.
+    assert res.json()["source"] == "google_places"
 import json
 
 

@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import oauth as _oauth
-from .credentials import decrypt_connection_token, encrypt_credential
+from .credentials import decrypt_connection_token, encrypt_credential, sanitize_metadata
 from .models import MetaAsset, MetaConnection
 from ..models import Channel, ChannelMessage
 from .providers.base import DiscoveredAsset, MetaAPIError, MetaProviderAdapter
@@ -116,6 +116,8 @@ async def store_connection(
 ) -> MetaConnection:
     """Upsert the (tenant, provider) connection with encrypted token."""
     token = credentials.get("access_token", "")
+    if provider == "whatsapp" and not token:
+        raise ValueError("WhatsApp connection requires an access token")
     conn = await get_connection(db, tenant_id, provider)
     if conn is None:
         conn = MetaConnection(id=str(uuid.uuid4()), tenant_id=tenant_id, provider=provider)
@@ -125,9 +127,27 @@ async def store_connection(
         conn.access_token_encrypted = encrypt_credential(token)
     conn.scopes = scopes or credentials.get("scopes", []) or []
     conn.status = "active"
-    conn.connection_metadata = {
-        k: v for k, v in credentials.items() if k != "access_token"
+    token_state_keys = {
+        "token_kind", "token_expires_at", "data_access_expires_at",
+        "token_last_rotated_at", "token_rotation_error", "token_expiry_source",
+        "token_rotation_next_attempt_at",
     }
+    conn.connection_metadata = sanitize_metadata({
+        k: v for k, v in credentials.items()
+        if k != "access_token" and not k.startswith("_") and k not in token_state_keys
+    })
+    if provider == "whatsapp" and (token or token_state_keys.intersection(credentials)):
+        conn.token_kind = credentials.get("token_kind")
+        conn.token_expires_at = credentials.get("token_expires_at")
+        conn.data_access_expires_at = credentials.get("data_access_expires_at")
+        conn.token_last_rotated_at = credentials.get("token_last_rotated_at")
+        conn.token_rotation_attempts = 0
+        conn.token_rotation_error = credentials.get("token_rotation_error")
+        conn.token_rotation_next_attempt_at = credentials.get("token_rotation_next_attempt_at")
+        conn.token_rotation_lease_until = None
+        conn.status = credentials.get("_token_status", "active")
+        if credentials.get("token_expiry_source"):
+            conn.connection_metadata["token_expiry_source"] = credentials["token_expiry_source"]
     db.add(conn)
     await db.commit()
     await db.refresh(conn)
@@ -503,14 +523,36 @@ async def validate_connection(
     if conn is None:
         raise ValueError("No connection for this tenant")
     adapter = get_adapter(provider)
+    expected_ciphertext = conn.access_token_encrypted
     token = decrypt_connection_token(conn)
     ok, detail = await adapter.validate_connection(
         conn, {"access_token": token or ""}
     )
-    conn.status = "active" if ok else "needs_reauth"
     conn.last_validated_at = _utcnow()
     if ok:
+        conn.status = "active"
         conn.last_successful_api_call_at = _utcnow()
+        if provider == "whatsapp":
+            if conn.token_rotation_error == "rotation_unsupported":
+                conn.status = "error"
+            else:
+                conn.token_rotation_error = None
+                conn.token_rotation_attempts = 0
+                conn.token_rotation_next_attempt_at = None
+    elif provider == "whatsapp":
+        if detail in {"auth_rejected", "missing token"}:
+            from .reauth import mark_needs_reauth
+
+            await mark_needs_reauth(
+                db, conn, "auth_rejected", expected_ciphertext=expected_ciphertext,
+            )
+        else:
+            conn.status = "error"
+            conn.token_rotation_error = (
+                "validation_transient" if detail == "transient_error" else "validation_failed"
+            )
+    else:
+        conn.status = "needs_reauth"
     db.add(conn)
     await db.commit()
     logger.info(

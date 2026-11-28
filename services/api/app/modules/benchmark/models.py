@@ -25,9 +25,12 @@ class BenchmarkConfig(Base):
     retention_days: Mapped[int] = mapped_column(Integer, default=730)
     refresh_hours: Mapped[int] = mapped_column(Integer, default=24)
     max_saved_places: Mapped[int] = mapped_column(Integer, default=50)
-    # Public Google endpoints (map search + place detail + BOQ reviews) are the
-    # default; configured paid providers remain selectable explicitly.
-    source: Mapped[str] = mapped_column(String(20), default="boq")
+    # Public Google endpoints are the fallback; official Places is the default.
+    # Full-history mode is opt-in and bounded for 1M+ tenant scale.
+    source: Mapped[str] = mapped_column(String(20), default="google_places")
+    review_history_mode: Mapped[str] = mapped_column(String(16), default="recent")
+    max_reviews_per_place: Mapped[int] = mapped_column(Integer, default=2000)
+    full_history_batch: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

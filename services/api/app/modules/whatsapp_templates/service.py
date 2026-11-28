@@ -790,8 +790,11 @@ async def send_template(
 
     from ..channels.meta.credentials import decrypt_connection_token
     from ..channels.meta.providers.whatsapp import MetaAPIError
+    from ..channels.meta.reauth import handle_meta_auth_failure
     from ..channels.meta.service import get_adapter
+    from ..channels.meta.quota import whatsapp_send_key
 
+    expected_ciphertext = asset.connection.access_token_encrypted
     token = decrypt_connection_token(asset.connection)
     if not token:
         row.status = "failed"
@@ -801,21 +804,26 @@ async def send_template(
 
     adapter = get_adapter("whatsapp")
     try:
-        provider_id = await adapter.send_template_message(
-            channel.platform_user_id, token, contact_phone,
-            template.name, template.language, values,
-        )
+        with whatsapp_send_key(f"template:{key}"):
+            provider_id = await adapter.send_template_message(
+                channel.platform_user_id, token, contact_phone,
+                template.name, template.language, values,
+            )
     except MetaAPIError as e:
+        auth_failed = await handle_meta_auth_failure(
+            db, asset.connection, e, expected_ciphertext=expected_ciphertext,
+        )
         row.status = "failed"
         row.error = (
-            f"The message window is closed and Meta rejected the template: {str(e)[:300]}"
+            "WhatsApp needs reconnection" if auth_failed
+            else f"The message window is closed and Meta rejected the template: {e.public[:300]}"
             if _WINDOW_ERROR in str(e)
-            else str(e)[:500]
+            else e.public[:500]
         )
         await db.commit()
         logger.warning(
-            "template send failed tenant=%s template=%s: %s",
-            tenant_id, template.name, str(e)[:200],
+            "template send failed tenant=%s template=%s: status=%s",
+            tenant_id, template.name, e.status_code,
         )
         return row, True
     except Exception as e:  # noqa: BLE001 - recorded, not raised

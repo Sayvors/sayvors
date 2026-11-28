@@ -92,6 +92,12 @@ const copy = {
   readFullAnswer: "Read full answer",
   fullAnswer: "Full grounded answer",
   close: "Close",
+  evidenceSummary: (claims: number, sources: number) => `Evidence — ${claims} claim, ${sources} sources`,
+  claim: "Claim",
+  status: "Status",
+  quote: "Quote",
+  openSource: "Open source",
+  noEvidence: "No evidence was saved for this run.",
   mentioned: "Mentioned",
   cited: "Cited",
   recommended: "Recommended",
@@ -170,6 +176,7 @@ describe("DecisionBrief", () => {
 
   it("shows the source domain beside each cited website", () => {
     render(<DecisionBrief detail={detail as never} copy={copy as never} />);
+    fireEvent.click(screen.getByText("Evidence — 1 claim, 2 sources"));
     expect(screen.getByText("example.com")).toBeVisible();
     expect(screen.getByText("failed.example")).toBeVisible();
   });

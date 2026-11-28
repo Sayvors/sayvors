@@ -171,5 +171,16 @@ Add the verified commit hash, test counts, and the explicit note that authentica
 - [ ] **Step 5: Final diff review and commit**
 
 Run: `git diff --check && git status --short`
-Commit: `feat(ai-visibility): ship result-first grounded research UX`.
-Do not push.
+
+## Implementation update — 2026-11-28
+
+- [x] All-locations aggregate view using existing per-branch latest-result APIs.
+- [x] Dedicated `ResearchBrief`, `EvidenceDrawer`, and `ResearchProgress` components.
+- [x] Result-first modal composition with top fixes, inline citations, source domains, and one evidence disclosure.
+- [x] EN/AR copy, responsive layout, keyboard/focus behavior, and evidence-row hover state.
+- [x] Frontend gate: 37 tests, TypeScript, ESLint, and production build pass.
+- [x] Independent review hardening: aggregate loading/error/partial states, branch identity, modal reverse-tab order, live-region elapsed time, and localized statuses; 43 focused tests pass.
+- [x] Browser verification through the existing dev tunnel after integration.
+- [ ] Authenticated staging and live-provider verification remain pending.
+
+Deviation from the original Task 2 sketch: the current backend accepts one `channel_id` per research job, so **All locations is a read-only aggregate**. Research remains branch-specific; no custom-question input or backend endpoint was added.

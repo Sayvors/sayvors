@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
@@ -30,6 +30,18 @@ const failedRun = {
   evidence_coverage: {},
 };
 
+const ambiguousRun = {
+  id: "run-ambiguous",
+  status: "ambiguous",
+  error: null,
+  evidence_coverage: {
+    third_party_source_count: 0,
+    owned_source_count: 1,
+    validated_claim_count: 0,
+    metrics: { platforms_found: 0 },
+  },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(useQuery).mockReturnValue({
@@ -41,6 +53,50 @@ beforeEach(() => {
 });
 
 describe("ResearchRunPanel retry", () => {
+  it("explains an ambiguous result and keeps its evidence visible", () => {
+    vi.mocked(useQuery).mockReturnValue({
+      data: ambiguousRun,
+      isPending: false,
+      isError: false,
+    } as never);
+
+    render(
+      <ResearchRunPanel
+        runId="run-ambiguous"
+        copy={en.aiVisibility}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(en.aiVisibility.stages.ambiguous)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: `${en.aiVisibility.facts.title} · ${en.aiVisibility.decisionBrief}` })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The public evidence was not clear enough to verify this answer. Retry the research to check again.",
+    );
+  });
+
+  it("retries an ambiguous run and selects the new run", async () => {
+    vi.mocked(useQuery).mockReturnValue({
+      data: ambiguousRun,
+      isPending: false,
+      isError: false,
+    } as never);
+    const onRetry = vi.fn();
+
+    render(
+      <ResearchRunPanel
+        runId="run-ambiguous"
+        copy={en.aiVisibility}
+        onRetry={onRetry}
+      />,
+    );
+
+    const alert = screen.getByRole("alert");
+    fireEvent.click(within(alert).getByRole("button", { name: en.aiVisibility.retry }));
+    await waitFor(() => expect(api.retryRun).toHaveBeenCalledWith("run-ambiguous"));
+    await waitFor(() => expect(onRetry).toHaveBeenCalledWith("run-new"));
+  });
+
   it("selects the new run returned by the retry endpoint", async () => {
     const onRetry = vi.fn();
     render(

@@ -1,6 +1,6 @@
 # Top-up and plan requests
 
-Last updated: 2026-11-18.
+Last updated: 2026-11-28.
 
 ## Why requests exist
 
@@ -50,7 +50,7 @@ Approval applies:
 | `messages` | Adds the amount to `tenant_subscriptions.message_bonus`. The effective WhatsApp allowance is always `plans.max_messages_per_month + message_bonus`, so a later plan change keeps the pack without pinning the tenant to an old absolute limit. Invalidates the message-usage cache. |
 | `channels` | Adds to `channels_bonus`; effective limit is `plans.max_channels + channels_bonus`. |
 | `ai_credit` | `grant_credit()` with idempotency key `billing-request:{id}` — double approval cannot double-grant. |
-| `plan` | Sets the subscription to the requested plan, clears any grant expiry, and writes the same slug to `users.plan` under the same row lock `grant_plan()` uses. Bonus allowances are untouched so they stack on the new base. No fake charge. |
+| `plan` | Switches the subscription and `users.plan` through `apply_plan_change()`, grants the target plan's `included_credit_cents` once when the plan changes, writes a `plan_grant` event keyed `billing-request-plan:{id}`, and syncs Redis after commit. Bonus allowances are untouched so they stack on the new base. No fake charge. |
 
 Approving any non-credit kind also writes a zero-amount `BillingEvent` with
 idempotency key `billing-request-decision:{id}` — a dated audit snapshot of
@@ -70,6 +70,8 @@ mutation is also captured by the admin audit middleware.
 - Allowances are additive and per-tenant; the plan catalog is untouched.
 - A request can never be applied twice, even by two operators at once.
 - The subscription and `users.plan` cannot disagree after a plan approval.
+- A plan change grants its included credit exactly once; same-plan reapplication,
+  retries and concurrent decisions cannot grant it twice.
 - One pending row per (tenant, kind, amount, plan) is a database constraint,
   not just a read-time courtesy; the operator queue is capped at five.
 - Prices are selected by the operator, not trusted from the browser.

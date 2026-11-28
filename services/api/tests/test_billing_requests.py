@@ -45,6 +45,7 @@ async def _seed(db, user_id: str) -> None:
             id="plan-enterprise-00000000000000001",
             slug="enterprise",
             name="Enterprise",
+            included_credit_cents=100000,
             max_messages_per_month=None,
             max_channels=None,
             features={"messaging": True},
@@ -145,6 +146,49 @@ async def test_approving_a_plan_switches_the_subscription(db, user_id):
     assert sub.plan_id == enterprise.id
 
 
+async def test_enterprise_plan_approval_grants_included_credit_once(db, user_id):
+    await _seed(db, user_id)
+    user = await db.get(User, user_id)
+    db.add(BillingEvent(
+        id="request-opening-credit",
+        tenant_id=user_id,
+        kind="credit_topup",
+        status="posted",
+        amount_cents=250,
+        reserved_cents=0,
+        balance_after_cents=250,
+        idempotency_key="request-opening-credit",
+    ))
+    user.ai_credit_cents = 250
+    await db.commit()
+    request, _ = await create_request(
+        db, tenant_id=user_id, created_by=user_id, kind="plan", plan_slug="enterprise"
+    )
+
+    decided = await decide_request(db, request.id, approve=True, operator="operator-a")
+
+    assert decided.status == "approved"
+    await db.refresh(user)
+    assert user.plan == "enterprise"
+    assert user.ai_credit_cents == 100250
+    grant = (
+        await db.execute(
+            select(BillingEvent).where(
+                BillingEvent.tenant_id == user_id,
+                BillingEvent.kind == "plan_grant",
+                BillingEvent.idempotency_key == f"billing-request-plan:{request.id}",
+            )
+        )
+    ).scalar_one()
+    assert grant.amount_cents == 100000
+    assert grant.balance_after_cents == 100250
+
+    with pytest.raises(RequestError, match="already reviewed"):
+        await decide_request(db, request.id, approve=True, operator="operator-b")
+    await db.refresh(user)
+    assert user.ai_credit_cents == 100250
+
+
 async def test_reject_does_not_apply_anything(db, user_id):
     await _seed(db, user_id)
     request, _ = await create_request(
@@ -241,7 +285,8 @@ async def test_plan_approval_writes_a_ledger_audit_row(db, user_id):
             )
         )
     ).scalar_one()
-    assert row.note.endswith("Plan switched to Enterprise.") or "enterprise" in row.note
+    assert "Plan switched to Enterprise." in row.note
+    assert "$1,000.00 AI credit added." in row.note
 
 
 async def test_rejection_writes_no_ledger_audit_row(db, user_id):

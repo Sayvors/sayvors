@@ -127,6 +127,19 @@ class ChannelMessage(Base):
         DateTime(timezone=True), nullable=True
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Provider status pricing evidence and quota linkage. These are nullable
+    # because old rows and non-WhatsApp channels never carry Meta evidence.
+    pricing_billable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    pricing_model: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    pricing_category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    pricing_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    pricing_subtype: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    provider_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    quota_idempotency_key: Mapped[str | None] = mapped_column(
+        String(160), nullable=True, index=True
+    )
     # The wamid this message quotes, for contextual replies. Stored because
     # the inbox renders the quoted bubble from the thread, and because the API
     # needs it to prove the target was in this conversation before sending.

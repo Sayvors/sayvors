@@ -10,6 +10,7 @@ from app.modules.channels.meta import oauth as _oauth
 from app.modules.channels.meta import service as _service
 from app.modules.channels.meta.models import MetaAsset, MetaConnection
 from app.modules.channels.meta.providers.base import DiscoveredAsset
+from app.modules.channels.meta.token_rotation import TokenInfo
 
 pytestmark = pytest.mark.asyncio
 
@@ -25,6 +26,9 @@ def _mock_adapter():
         "access_token": "fake-exchanged-token",
         "token_type": "bearer",
     }
+    adapter.inspect_token.return_value = TokenInfo(
+        token_kind="BUSINESS_INTEGRATION_SYSTEM_USER", is_valid=True,
+    )
     adapter.discover_assets.return_value = [
         DiscoveredAsset(
             asset_type="waba",

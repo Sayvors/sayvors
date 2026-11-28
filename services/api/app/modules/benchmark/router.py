@@ -550,7 +550,7 @@ async def refresh_place(
     """Fetch one place now so its card is ready without waiting for the worker.
 
     The free provider gets a bounded 100-review sample here; the scheduled
-    collector later fills the full 30-day set (up to 500 reviews).
+    collector later fills the full 30-day set (up to 250 reviews).
     """
     await check_feature(ctx.tenant_id, "benchmark_external")
     import time as _time

@@ -20,7 +20,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..llm.gateway import LLMMessage, complete, resolve_tenant_model
 from .models import BenchmarkThemeAnalysis
 from .theme_extraction import extract_local_themes, validate_llm_themes
-from .theme_service import MAX_REVIEW_TEXT, MAX_SAMPLE_REVIEWS, hash_sample, normalize_reviews
+from .theme_service import (
+    MAX_REVIEW_TEXT,
+    MAX_SAMPLE_REVIEWS,
+    MAX_SAMPLE_REVIEWS_FULL,
+    hash_sample,
+    normalize_reviews,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +119,7 @@ async def handle_benchmark_theme_extract(job: Any, db: AsyncSession) -> dict[str
         return {"status": "already_ready", "analysis_id": analysis.id}
 
     raw_reviews = analysis.sample_json if isinstance(analysis.sample_json, list) else []
-    reviews = normalize_reviews(raw_reviews)
+    reviews = normalize_reviews(raw_reviews, limit=MAX_SAMPLE_REVIEWS_FULL)
     if hash_sample(reviews) != analysis.sample_hash:
         # A previous extractor version or a newer sample can leave an older
         # queued job with a hash that no longer matches. Skip it cleanly; the
@@ -126,9 +132,9 @@ async def handle_benchmark_theme_extract(job: Any, db: AsyncSession) -> dict[str
     analysis.updated_at = datetime.now(timezone.utc)
     await db.commit()
 
-    if len(reviews) < 2:
+    if len(reviews) < 2 or len(reviews) > MAX_SAMPLE_REVIEWS:
         themes = await _local_themes_or_fail(db, job, payload, reviews)
-        source = "local"
+        source = "local_full_history" if len(reviews) > MAX_SAMPLE_REVIEWS else "local"
         model = None
     else:
         source = "local"

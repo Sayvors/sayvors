@@ -21,6 +21,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from .meta.quota import whatsapp_send_key
 from .models import ChannelMessage
 from .service import (
     decrypt_message_content,
@@ -198,9 +199,10 @@ async def send_ai_reaction(
         reply_to_message_id=target_message_id[:200],
     )
     try:
-        provider_id = await adapter.send_reaction(
-            phone_number_id, token, contact_phone, target_message_id, emoji
-        )
+        with whatsapp_send_key(row.id):
+            provider_id = await adapter.send_reaction(
+                phone_number_id, token, contact_phone, target_message_id, emoji
+            )
     except Exception as exc:  # noqa: BLE001 - courtesy, not a delivery
         logger.warning(
             "AI reaction failed channel=%s emoji=%s: %s: %s",
@@ -227,6 +229,7 @@ async def send_pack_sticker(
     adapter,
     reply_to: str | None = None,
     fallback_text: str | None = None,
+    idempotency_key: str | None = None,
 ) -> ChannelMessage:
     """Store, upload and send one bundled sticker.
 
@@ -273,9 +276,10 @@ async def send_pack_sticker(
         )
         if not media_id:
             raise RuntimeError("WhatsApp returned no media id for the sticker")
-        provider_id = await adapter.send_sticker(
-            phone_number_id, token, contact_phone, media_id
-        )
+        with whatsapp_send_key(idempotency_key or row.id):
+            provider_id = await adapter.send_sticker(
+                phone_number_id, token, contact_phone, media_id
+            )
     except Exception as exc:  # noqa: BLE001 - fallback handled below
         logger.warning(
             "AI sticker send failed channel=%s key=%s: %s: %s",
@@ -292,6 +296,9 @@ async def send_pack_sticker(
                 adapter=adapter,
                 reply_to=reply_to,
                 error=str(exc)[:500],
+                idempotency_key=(
+                    f"{idempotency_key}:fallback" if idempotency_key else None
+                ),
             )
         row.status = "failed"
         row.error = str(exc)[:500]
@@ -319,6 +326,7 @@ async def _send_text_fallback(
     adapter,
     reply_to: str | None,
     error: str,
+    idempotency_key: str | None = None,
 ) -> ChannelMessage:
     """One plain-text line when a sticker-only reply could not be delivered."""
     row = ChannelMessage(
@@ -335,10 +343,11 @@ async def _send_text_fallback(
         reply_to_message_id=(reply_to or "")[:200] or None,
     )
     try:
-        provider_id = await adapter.send_text_message(
-            phone_number_id, token, contact_phone, text,
-            context_message_id=reply_to,
-        )
+        with whatsapp_send_key(idempotency_key or row.id):
+            provider_id = await adapter.send_text_message(
+                phone_number_id, token, contact_phone, text,
+                context_message_id=reply_to,
+            )
     except Exception as exc:  # noqa: BLE001 - recorded on the row
         row.status = "failed"
         row.error = f"sticker failed ({error}); text fallback failed: {exc}"[:500]

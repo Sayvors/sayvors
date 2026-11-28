@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import {
   type MetaAsset,
@@ -250,6 +250,15 @@ export default function MetaConnections({
         const visible = p.key === "whatsapp" ? list.filter((a) => a.asset_type === "phone_number") : list;
         const active = visible.filter((a) => a.active);
         const isDisconnected = !conn || conn.status === "revoked";
+        const tokenHealth = p.key === "whatsapp" && !isDisconnected ? conn.token_health : null;
+        const requiresReconnect = tokenHealth === "reauth_required";
+        const tokenHealthMessage = tokenHealth === "healthy"
+          ? m.tokenHealthy
+          : tokenHealth === "rotating"
+            ? m.tokenRotating
+            : requiresReconnect
+              ? m.tokenReconnectRequired
+              : null;
         const needsAsset = !isDisconnected && active.length === 0;
         const label = isDisconnected
           ? providerBlurb(p.key)
@@ -280,6 +289,22 @@ export default function MetaConnections({
                 <p className="mt-0.5 truncate text-[11.5px] text-ink/45 dark:text-fog/45" title={label}>
                   {label}
                 </p>
+                {p.key === "whatsapp" && (
+                  <p
+                    role="status"
+                    className={tokenHealthMessage
+                      ? `mt-0.5 text-[11.5px] ${
+                          requiresReconnect
+                            ? "font-semibold text-red-600 dark:text-red-400"
+                            : tokenHealth === "rotating"
+                              ? "text-amber-700 dark:text-amber-300"
+                              : "text-emerald-700 dark:text-emerald-300"
+                        }`
+                      : undefined}
+                  >
+                    {tokenHealthMessage}
+                  </p>
+                )}
                 {!p.enabled && (
                   <p className="mt-0.5 text-[10.5px] font-semibold text-amber-600 dark:text-amber-400">
                     {m.paused}
@@ -289,13 +314,13 @@ export default function MetaConnections({
             </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-ink/[0.05] pt-3 dark:border-fog/[0.06]">
-              {isDisconnected ? (
+              {isDisconnected || requiresReconnect ? (
                 p.enabled ? (
                   <Link
                     href={CONNECT_HREF[p.key]}
                     className="inline-flex min-h-8 items-center rounded-lg bg-deep-violet px-3 text-[12px] font-semibold text-white shadow-sm outline-none transition hover:bg-deep-violet/90 focus-visible:ring-2 focus-visible:ring-deep-violet/40 focus-visible:ring-offset-2"
                   >
-                    {m.connect}
+                    {requiresReconnect ? m.reconnect : m.connect}
                   </Link>
                 ) : (
                   <span className="inline-flex min-h-8 items-center rounded-lg bg-ink/[0.05] px-3 text-[12px] font-semibold text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45">
@@ -521,6 +546,13 @@ function StatusPill({ conn }: { conn: MetaConnection | undefined }) {
     return (
       <span className="rounded-full bg-ink/[0.05] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/45 dark:bg-fog/[0.07] dark:text-fog/45">
         {m.notConnected}
+      </span>
+    );
+  }
+  if (conn.provider === "whatsapp" && conn.token_health === "reauth_required") {
+    return (
+      <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 dark:text-red-300">
+        {m.reconnectRequired}
       </span>
     );
   }

@@ -3,61 +3,17 @@
 import { useCallback, useState, type ReactNode } from "react";
 import Modal from "@/components/dashboard/media/Modal";
 import type { AiVisibilityRunDetail } from "@/lib/api-ai-visibility";
+import type { Dict } from "@/lib/i18n/en";
 import { safeHref } from "@/lib/safe-url";
-import ClaimLedger from "./ClaimLedger";
+import EvidenceDrawer from "./EvidenceDrawer";
 import FixNextActions from "./FixNextActions";
 import ResearchProvenance from "./ResearchProvenance";
 
 const ANSWER_PREVIEW_CHARS = 600;
 
-function sourceDomain(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
-}
+type Copy = Dict["aiVisibility"];
 
-type Copy = {
-  disclosure: string;
-  answer: string;
-  claimLedger: string;
-  supported: string;
-  contradicted: string;
-  unsupported: string;
-  evidence: string;
-  competitors: string;
-  fixNext: string;
-  sources: string;
-  mentioned: string;
-  cited: string;
-  recommended: string;
-  incorrect: string;
-  noActions: string;
-  readFullAnswer: string;
-  fullAnswer: string;
-  close: string;
-  howSearched: string;
-  searchProvider: string;
-  searchQuery: string;
-  searchResults: string;
-  sourcesFetched: string;
-  thirdPartySources: string;
-  ownedSources: string;
-  socialNotChecked: string;
-  publishingChecklist: string;
-  publishingHint: string;
-  platformCoverage: string;
-  foundPublic: string;
-  notFoundPublic: string;
-  unknownPublic: string;
-  privateNote: string;
-  publishPublicly: string;
-  publishingPlatforms: Record<string, string>;
-  publishingReasons: Record<string, string>;
-};
-
-function Answer({
+export function Answer({
   text,
   sources,
 }: {
@@ -169,24 +125,6 @@ export default function DecisionBrief({
         copy={copy}
       />
       <section>
-        <h3 className="ai-eyebrow mb-3">{copy.claimLedger}</h3>
-        <ClaimLedger
-          claims={detail.claims}
-          sources={detail.sources}
-          copy={copy}
-        />
-      </section>
-      {detail.competitor_mentions.length > 0 && (
-        <section>
-          <h3 className="ai-eyebrow mb-3">{copy.competitors}</h3>
-          {detail.competitor_mentions.map((row, index) => (
-            <p key={index} className="text-[12px] text-[var(--ui-ink-2)]">
-              {row.name}: {row.quote}
-            </p>
-          ))}
-        </section>
-      )}
-      <section>
         <h3 className="ai-eyebrow mb-3">{copy.fixNext}</h3>
         {detail.actions.length > 0 ? (
           <FixNextActions actions={detail.actions} label={copy.fixNext} />
@@ -194,40 +132,7 @@ export default function DecisionBrief({
           <p className="text-[12px] leading-5 text-[var(--ai-ink-2)]">{copy.noActions}</p>
         )}
       </section>
-      <section>
-        <h3 className="ai-eyebrow mb-3">{copy.sources}</h3>
-        {detail.sources.map((source) => {
-          const href = safeHref(source.url);
-          return (
-            <p
-              key={source.id}
-              className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-[var(--ai-line)] py-2 text-[11px] leading-5 text-[var(--ai-ink-2)] last:border-0"
-            >
-              <span className="font-mono text-[10px] font-bold text-[var(--ai-signal)]">
-                {source.label}
-              </span>
-              {sourceDomain(source.url) && (
-                <span className="font-mono text-[10px] text-[var(--ai-muted)]">
-                  {sourceDomain(source.url)}
-                </span>
-              )}
-              {href ? (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-bold text-[var(--ai-accent)] underline"
-                >
-                  {source.title ?? source.url}
-                </a>
-              ) : (
-                source.title ?? source.url
-              )}
-              {source.fetch_error ? ` · ${source.fetch_error}` : ""}
-            </p>
-          );
-        })}
-      </section>
+      <EvidenceDrawer detail={detail} copy={copy} />
     </div>
   );
 }

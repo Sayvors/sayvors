@@ -33,6 +33,7 @@ from ...channels.service import (
     hash_contact_phone,
 )
 from .models import MetaAsset
+from .quota import whatsapp_send_key
 from .webhooks.parser import is_message_status_event
 
 logger = logging.getLogger(__name__)
@@ -1033,7 +1034,7 @@ async def _channel_for(
 
 async def _send_catalog_image(
     db, adapter, channel, tenant_id: str, phone_number_id: str, token: str,
-    to: str, item_id: str,
+    to: str, item_id: str, *, idempotency_key: str | None = None,
 ) -> None:
     """Send the photo of one catalog item the model asked for.
 
@@ -1058,9 +1059,10 @@ async def _send_catalog_image(
             return
         price = price_display(item)
         caption = f"{item.name} — {price}" if price else item.name
-        provider_msg_id = await adapter.send_image(
-            phone_number_id, token, to, item.image_url, caption
-        )
+        with whatsapp_send_key(idempotency_key or str(uuid.uuid4())):
+            provider_msg_id = await adapter.send_image(
+                phone_number_id, token, to, item.image_url, caption
+            )
     except Exception as e:  # noqa: BLE001 - never break the reply flow
         logger.warning(
             "catalog image failed item=%s: %s: %s",
@@ -1685,6 +1687,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
     from ..service import categorize_message as _categorize
     from .credentials import decrypt_connection_token
     from .providers.base import MetaAmbiguousError, MetaAPIError
+    from .reauth import handle_meta_auth_failure
     from .service import get_adapter
 
     phone_number_id = event.get("external_asset_id") or ""
@@ -1837,6 +1840,9 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
         # receipt IS the customer's question, and the team must be able to open
         # it even when the AI is off. Bytes live in the private store; the inbox
         # route authorizes every read.
+        expected_ciphertext = (
+            asset.connection.access_token_encrypted if asset.connection else None
+        )
         token = decrypt_connection_token(asset.connection) if asset.connection else None
         attachment_stored: bool | None = None
         if msg_type in INBOUND_MEDIA_TYPES:
@@ -2324,10 +2330,11 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 # the inbox. A reply that only existed on WhatsApp would leave
                 # the agent staring at a conversation that looks unanswered.
                 try:
-                    provider_msg_id = await adapter.send_text_message(
-                        phone_number_id, token, from_wa, canned,
-                        context_message_id=wamid,
-                    )
+                    with whatsapp_send_key(f"ai:{wamid}:short"):
+                        provider_msg_id = await adapter.send_text_message(
+                            phone_number_id, token, from_wa, canned,
+                            context_message_id=wamid,
+                        )
                 except MetaAmbiguousError as e:
                     # The send may have landed; the outbox retry must not
                     # re-send it. The row stays pending and the re-raise
@@ -2342,19 +2349,23 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                     await db.commit()
                     raise
                 except MetaAPIError as e:
+                    auth_failed = await handle_meta_auth_failure(
+                        db, asset.connection, e, expected_ciphertext=expected_ciphertext,
+                    )
+                    detail = "WhatsApp needs reconnection" if auth_failed else e.public
                     logger.error(
-                        "WhatsApp short-circuit send failed from=+%s: %s %s",
-                        from_wa[-6:], e.status_code, str(e)[:200],
+                        "WhatsApp short-circuit send failed from=+%s: status=%s",
+                        from_wa[-6:], e.status_code,
                     )
                     await _publish_typing(tenant_id, channel.id, from_wa, False)
                     if e.status_code == 429 or e.status_code >= 500:
                         inbound_row.ai_reply_status = "pending"
-                        inbound_row.ai_reply_error = str(e)[:300]
+                        inbound_row.ai_reply_error = detail[:300]
                         db.add(inbound_row)
                         await db.commit()
                         raise
                     inbound_row.ai_reply_status = "failed"
-                    inbound_row.ai_reply_error = str(e)[:500]
+                    inbound_row.ai_reply_error = detail[:500]
                     db.add(inbound_row)
                     await db.commit()
                     return
@@ -2618,10 +2629,11 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                     media_id = await adapter.upload_media(
                         phone_number_id, token, audio_bytes, mime_type
                     )
-                    provider_msg_id = await adapter.send_voice_note(
-                        phone_number_id, token, from_wa, media_id,
-                        voice=is_voice,
-                    )
+                    with whatsapp_send_key(f"ai:{wamid}:voice"):
+                        provider_msg_id = await adapter.send_voice_note(
+                            phone_number_id, token, from_wa, media_id,
+                            voice=is_voice,
+                        )
                 except Exception as e:  # noqa: BLE001 — MetaAPIError, httpx, anything
                     # Network blips raise httpx.HTTPError, not MetaAPIError —
                     # catch everything: a voice problem may never cost the
@@ -2727,15 +2739,19 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 quote_id = wamid if index == 0 else None
                 try:
                     if use_buttons:
-                        provider_msg_id = await adapter.send_interactive_buttons(
-                            phone_number_id, token, from_wa, part, choices,
-                            context_message_id=quote_id,
-                        )
+                        send_key = f"ai:{wamid}:{index}:interactive"
+                        with whatsapp_send_key(send_key):
+                            provider_msg_id = await adapter.send_interactive_buttons(
+                                phone_number_id, token, from_wa, part, choices,
+                                context_message_id=quote_id,
+                            )
                     else:
-                        provider_msg_id = await adapter.send_text_message(
-                            phone_number_id, token, from_wa, part,
-                            context_message_id=quote_id,
-                        )
+                        send_key = f"ai:{wamid}:{index}:text"
+                        with whatsapp_send_key(send_key):
+                            provider_msg_id = await adapter.send_text_message(
+                                phone_number_id, token, from_wa, part,
+                                context_message_id=quote_id,
+                            )
                 except MetaAmbiguousError as e:
                     # Mid-flight failure (timeout, broken response): the send
                     # may have landed, so this reply is neither retried nor
@@ -2759,24 +2775,32 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                     # customer the reply: fall back to plain text once.
                     if use_buttons:
                         logger.warning(
-                            "WhatsApp interactive send rejected from=+%s: %s — "
-                            "falling back to text", from_wa[-6:], str(e)[:160],
+                            "WhatsApp interactive send rejected from=+%s: status=%s — "
+                            "falling back to text", from_wa[-6:],
+                            getattr(e, "status_code", ""),
                         )
                         try:
-                            provider_msg_id = await adapter.send_text_message(
-                                phone_number_id, token, from_wa, part,
-                                context_message_id=quote_id,
-                            )
+                            with whatsapp_send_key(f"ai:{wamid}:{index}:fallback-text"):
+                                provider_msg_id = await adapter.send_text_message(
+                                    phone_number_id, token, from_wa, part,
+                                    context_message_id=quote_id,
+                                )
                         except MetaAPIError as fallback_error:
                             e = fallback_error
                         else:
                             use_buttons = False
                             e = None
                     if e is not None:
+                        auth_failed = await handle_meta_auth_failure(
+                        db, asset.connection, e, expected_ciphertext=expected_ciphertext,
+                    )
+                        detail = (
+                            "WhatsApp needs reconnection" if auth_failed
+                            else getattr(e, "public", type(e).__name__)
+                        )
                         logger.error(
-                            "WhatsApp send failed from=+%s: %s %s",
+                            "WhatsApp send failed from=+%s: status=%s",
                             from_wa[-6:], getattr(e, "status_code", ""),
-                            str(e)[:200],
                         )
                         status_code = getattr(e, "status_code", 422)
                         if status_code == 429 or status_code >= 500:
@@ -2786,7 +2810,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                             inbound_row.ai_reply_attempts = (
                                 inbound_row.ai_reply_attempts or 0
                             ) + 1
-                            inbound_row.ai_reply_error = str(e)[:300]
+                            inbound_row.ai_reply_error = detail[:300]
                             db.add(inbound_row)
                             await db.commit()
                             raise
@@ -2799,13 +2823,13 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                                 direction="outbound",
                                 content=encrypt_message_content(part),
                                 status="failed",
-                                error=str(e)[:500],
+                                error=detail[:500],
                                 contact_phone=encrypt_contact_phone(from_wa or None),
                                 contact_phone_hash=hash_contact_phone(from_wa or None),
                             )
                         )
                         inbound_row.ai_reply_status = "failed"
-                        inbound_row.ai_reply_error = str(e)[:500]
+                        inbound_row.ai_reply_error = detail[:500]
                         db.add(inbound_row)
                         await db.commit()
                         # Later parts would land without their context — stop.
@@ -2872,6 +2896,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
             await _send_catalog_image(
                 db, adapter, channel, tenant_id, phone_number_id, token,
                 from_wa, send_item_id,
+                idempotency_key=f"ai:{wamid}:catalog:{send_item_id}",
             )
 
         # Native card the model requested (location / contact). Sent after the
@@ -2910,6 +2935,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                 fallback_text=(
                     sticker_fallback_text(sticker_key) if not reply else None
                 ),
+                idempotency_key=f"ai:{wamid}:sticker:{sticker_key}",
             )
 
         # Lead engine, send side: merge whatever the reply call extracted,
@@ -3169,11 +3195,11 @@ async def _handle_message_status(event: dict, data: dict) -> None:
     """Mirror Cloud API delivery/read/failure states onto outbound rows."""
     from datetime import datetime, timezone
 
-    from ..models import ChannelMessage
+    from ..models import Channel, ChannelMessage
 
     provider_msg_id = event.get("external_event_id") or ""
     status = data.get("status") or ""
-    if not provider_msg_id or status not in ("delivered", "read", "failed"):
+    if not provider_msg_id or status not in ("sent", "delivered", "read", "failed"):
         return
     now = datetime.now(timezone.utc)
     async with async_session() as db:
@@ -3191,8 +3217,30 @@ async def _handle_message_status(event: dict, data: dict) -> None:
             # Read is terminal; a redelivered/out-of-order "delivered" is not
             # news and must not move the recorded time.
             return
-        if row.status == "failed" and status != "failed":
+        if row.status == "failed" and status not in ("failed", "sent"):
             return
+        # Retain structured pricing evidence from status webhooks. Raw payload
+        # retention alone cannot reconcile billability or provider confirmation.
+        for field in (
+            "billable", "pricing_model", "pricing_category",
+            "pricing_type", "pricing_subtype",
+        ):
+            value = data.get(field)
+            if value is not None:
+                setattr(row, f"pricing_{field}" if field == "billable" else field, value)
+        if status == "sent":
+            if row.provider_confirmed_at is None:
+                row.provider_confirmed_at = now
+            if row.status == "failed":
+                row.status = "sent"
+                row.error = None
+            from .quota import reconcile_provider_sent
+
+            channel = await db.get(Channel, row.channel_id)
+            if channel is not None and channel.platform == "whatsapp":
+                await reconcile_provider_sent(
+                    db, channel.user_id, channel.platform_user_id, provider_msg_id
+                )
         # Keep the first time each transition was observed: webhooks can be
         # redelivered out of order, and a later duplicate must not move the
         # timestamp forward.

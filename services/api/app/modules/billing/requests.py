@@ -271,39 +271,35 @@ async def _apply_channels(db: AsyncSession, tenant_id: str, amount: int) -> str:
     return f"Channel allowance is now {effective:,}."
 
 
-async def _apply_plan(db: AsyncSession, tenant_id: str, plan_slug: str) -> str:
-    from ..users.models import User
+async def _apply_plan(
+    db: AsyncSession,
+    tenant_id: str,
+    plan_slug: str,
+    *,
+    request_id: str,
+    operator: str | None,
+    note: str | None,
+) -> tuple[str, int | None]:
+    from .service import apply_plan_change
 
-    plan = (
-        await db.execute(select(Plan).where(Plan.slug == plan_slug))
-    ).scalar_one_or_none()
-    if plan is None or not plan.is_active:
-        raise RequestError("That plan is no longer available.")
-    # users.plan is the denormalised billing contact used by the admin list,
-    # email campaigns and the effective-plan fallback. An approval that only
-    # moved the subscription left it claiming the old tier forever. Lock the
-    # same row grant_plan() locks so a concurrent admin grant cannot lose
-    # either write.
-    user = (
-        await db.execute(select(User).where(User.id == tenant_id).with_for_update())
-    ).scalar_one_or_none()
-    if user is None:
-        raise RequestError("Tenant not found.")
-    if len(plan.slug) > 16:  # users.plan is VARCHAR(16)
-        raise RequestError("That plan's identifier is too long for the account record.")
-    sub, _current = await _subscription(db, tenant_id)
-    if sub is None:
-        sub = TenantSubscription(tenant_id=tenant_id, plan_id=plan.id, status="active")
-        db.add(sub)
-    else:
-        sub.plan_id = plan.id
-        sub.status = "active"
-        sub.granted_until = None
-    # message_bonus/channels_bonus are deliberately untouched: they are the
-    # additive top-ups the tenant bought and must stack on the new plan.
-    user.plan = plan.slug
-    await db.flush()
-    return f"Plan switched to {plan.name}."
+    try:
+        result = await apply_plan_change(
+            tenant_id,
+            plan_slug,
+            granted_until=None,
+            note=note or f"Approved plan request {request_id}",
+            created_by=operator or "admin",
+            idempotency_key=f"billing-request-plan:{request_id}",
+            db=db,
+        )
+    except ValueError as exc:
+        raise RequestError(str(exc)) from exc
+    summary = f"Plan switched to {result['plan_name']}."
+    granted = int(result["granted_credit_cents"] or 0)
+    if granted > 0:
+        summary += f" ${granted / 100:,.2f} AI credit added."
+        return summary, int(result["balance_cents"])
+    return summary, None
 
 
 async def _subscription(db: AsyncSession, tenant_id: str) -> tuple[TenantSubscription | None, Plan]:
@@ -360,13 +356,21 @@ async def decide_request(
         raise RequestError("This request was already reviewed.")
 
     summary = "Rejected."
+    plan_grant_balance: int | None = None
     if approve:
         if request.kind == "messages":
             summary = await _apply_messages(db, request.tenant_id, int(request.amount or 0))
         elif request.kind == "channels":
             summary = await _apply_channels(db, request.tenant_id, int(request.amount or 0))
         elif request.kind == "plan":
-            summary = await _apply_plan(db, request.tenant_id, request.plan_slug or "")
+            summary, plan_grant_balance = await _apply_plan(
+                db,
+                request.tenant_id,
+                request.plan_slug or "",
+                request_id=request.id,
+                operator=operator,
+                note=note,
+            )
         elif request.kind == "ai_credit":
             from .service import grant_credit
 
@@ -380,12 +384,9 @@ async def decide_request(
             )
             summary = f"${(request.amount or 0) / 100:,.2f} AI credit added."
 
-        # AI credit already writes its own ledger row via grant_credit with
-        # the `billing-request:{id}` key. The allowance and plan kinds do not,
-        # so record them here. A zero-amount posted event is a dated audit
-        # entry: it must not move the balance, only snapshot it. The key makes
-        # a retried decision a no-op even if a crashed worker left the request
-        # status pending.
+        # AI credit and plan changes write their own grant rows above. This
+        # additional zero-amount event is the dated decision snapshot for every
+        # non-credit approval; it never moves the balance.
         if request.kind != "ai_credit":
             from .ledger import ensure_ledger_initialized
 
@@ -456,8 +457,25 @@ async def decide_request(
         committed = await db.get(BillingRequest, request_id)
         if committed is not None and committed.status == "approved":
             await db.refresh(committed)
+            from ..users.models import User
+            from .budget import sync_balance
+
+            owner = await db.get(User, request.tenant_id)
+            if owner is not None:
+                await sync_balance(request.tenant_id, int(owner.ai_credit_cents or 0))
             return committed
         raise
+
+    if plan_grant_balance is not None:
+        from .budget import sync_balance
+
+        synced = await sync_balance(request.tenant_id, plan_grant_balance)
+        if not synced:
+            logger.warning(
+                "Plan request committed; Redis mirror sync failed: tenant=%s balance=%s¢",
+                request.tenant_id,
+                plan_grant_balance,
+            )
 
     await db.refresh(request)
 

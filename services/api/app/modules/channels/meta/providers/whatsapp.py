@@ -7,14 +7,24 @@ number, and persists WABA + phone_number assets.
 """
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import time
+import uuid
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
+
+import httpx
 
 from .....config import settings
 from .....core.http import UnsafeUrlError
 from .....core.pinned_http import fetch_pinned_media
-from .base import DiscoveredAsset, MetaAPIError, MetaProviderAdapter, graph_base
+from .base import (
+    DiscoveredAsset, MetaAPIError, MetaAmbiguousError, MetaPermanentError,
+    MetaProviderAdapter, MetaTransportError, graph_base,
+)
+from ..token_rotation import parse_debug_token
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +144,88 @@ class WhatsAppAdapter(MetaProviderAdapter):
             if match:
                 phone_number_id = match.group(1)
                 await self._wait_for_send_capacity(phone_number_id)
-        return await super()._graph(method, path, token, **kwargs)
+        payload = kwargs.get("json") or {}
+        is_message_send = (
+            method.upper() == "POST"
+            and _SEND_PATH.match(path) is not None
+            and not payload.get("typing_indicator")
+            and payload.get("status") != "read"
+        )
+        if not is_message_send:
+            return await super()._graph(method, path, token, **kwargs)
+
+        phone_number_id = _SEND_PATH.match(path).group(1)
+        reservation = await self._reserve_message_quota(phone_number_id, payload)
+        try:
+            response = await super()._graph(method, path, token, **kwargs)
+            messages = (response.json() or {}).get("messages") or []
+            provider_message_id = messages[0].get("id") if messages else None
+        except MetaTransportError:
+            await self._settle_quota(reservation.id, "released", failure_classification="transport_never_reached")
+            raise
+        except Exception:
+            # Meta HTTP rejections and mid-flight ambiguity may have reached the
+            # provider. Preserve the existing product policy: they count once.
+            await self._settle_quota(reservation.id, "consumed")
+            raise
+        await self._settle_quota(reservation.id, "consumed", provider_message_id=provider_message_id)
+        return response
+
+    async def _reserve_message_quota(self, phone_number_id: str, payload: dict):
+        """Resolve the tenant from the current phone asset and reserve one send."""
+        from sqlalchemy import select
+        from ..models import MetaAsset
+        from ..quota import (
+            _factory as quota_factory, current_send_key, reserve_whatsapp_send,
+        )
+
+        context_id = (payload.get("context") or {}).get("message_id")
+        canonical = (
+            json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            if context_id else ""
+        )
+        send_key = current_send_key() or (
+            f"context:{hashlib.sha256(canonical.encode()).hexdigest()}"
+            if context_id else str(uuid.uuid4())
+        )
+        async with quota_factory()() as db:
+            asset = (
+                await db.execute(
+                    select(MetaAsset).where(
+                        MetaAsset.provider == "whatsapp",
+                        MetaAsset.asset_type == "phone_number",
+                        MetaAsset.external_asset_id == phone_number_id,
+                        MetaAsset.active.is_(True),
+                    )
+                )
+            ).scalar_one_or_none()
+            if asset is None:
+                raise MetaPermanentError(
+                    "WhatsApp number is not connected to an active tenant asset"
+                )
+            return await reserve_whatsapp_send(
+                db, asset.tenant_id, phone_number_id, send_key,
+            )
+
+    async def _settle_quota(
+        self, reservation_id: str, outcome: str, *,
+        provider_message_id: str | None = None,
+        failure_classification: str | None = None,
+    ) -> None:
+        """Best-effort settlement after the provider attempt; never mask its result."""
+        from ..quota import _factory as quota_factory, settle_whatsapp_reservation
+
+        try:
+            async with quota_factory()() as db:
+                await settle_whatsapp_reservation(
+                    db, reservation_id, outcome,
+                    provider_message_id=provider_message_id,
+                    failure_classification=failure_classification,
+                )
+        except Exception:
+            # The reservation already counts. A settlement outage must not
+            # trigger a blind resend; status reconciliation can finish it later.
+            logger.exception("WhatsApp quota settlement failed reservation=%s", reservation_id)
 
     async def _wait_for_send_capacity(self, phone_number_id: str) -> None:
         deadline = time.monotonic() + WHATSAPP_SEND_MAX_WAIT_SECONDS
@@ -185,27 +276,74 @@ class WhatsAppAdapter(MetaProviderAdapter):
             "state": state,
         }
 
-    async def exchange_code(self, code: str, redirect_uri: str | None = None) -> dict:
-        """Exchange the Embedded Signup auth code for a business token."""
+    async def _oauth_payload(self, params: dict, *, public_error: str) -> dict:
+        """Call Meta's OAuth endpoint without retaining raw error bodies."""
         if not settings.META_APP_ID or not settings.META_APP_SECRET:
             raise MetaAPIError("Meta app not configured (META_APP_ID/SECRET)", 503)
         version = settings.META_GRAPH_API_VERSION or "v26.0"
-        resp = await self._http.get(
-            f"https://graph.facebook.com/{version}/oauth/access_token",
-            params={
+        try:
+            resp = await self._http.post(
+                f"https://graph.facebook.com/{version}/oauth/access_token",
+                data=params,
+            )
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            raise MetaTransportError("Meta OAuth endpoint unreachable") from exc
+        except httpx.HTTPError as exc:
+            raise MetaAmbiguousError("Meta OAuth response was interrupted") from exc
+        if resp.status_code != 200:
+            raise MetaAPIError(
+                f"Meta OAuth request failed ({resp.status_code})",
+                resp.status_code,
+                public=public_error,
+            )
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise MetaAPIError(
+                "Meta OAuth response was not JSON", 502, public=public_error,
+            ) from exc
+        if not isinstance(payload, dict) or not payload.get("access_token"):
+            raise MetaAPIError("Meta OAuth response had no access token", 502, public=public_error)
+        return payload
+
+    async def exchange_code(self, code: str, redirect_uri: str | None = None) -> dict:
+        """Exchange the Embedded Signup code, preserving every returned field."""
+        return await self._oauth_payload(
+            {
                 "client_id": settings.META_APP_ID,
                 "client_secret": settings.META_APP_SECRET,
                 "code": code,
             },
+            public_error="WhatsApp rejected the sign-in. Try connecting again.",
         )
-        if resp.status_code != 200:
-            raise MetaAPIError(
-                f"WhatsApp code exchange failed ({resp.status_code}): "
-                f"{resp.text[:300]}",
-                401,
-                public="WhatsApp rejected the sign-in. Try connecting again.",
-            )
-        return resp.json()  # {access_token, ...}
+
+    async def inspect_token(self, token: str):
+        """Inspect a business token with an app token, never as caller auth."""
+        app_payload = await self._oauth_payload(
+            {
+                "client_id": settings.META_APP_ID,
+                "client_secret": settings.META_APP_SECRET,
+                "grant_type": "client_credentials",
+            },
+            public_error="WhatsApp token inspection is temporarily unavailable.",
+        )
+        resp = await self._graph(
+            "GET", "/debug_token", app_payload["access_token"],
+            params={"input_token": token},
+        )
+        return parse_debug_token(resp.json(), now=datetime.now(timezone.utc))
+
+    async def exchange_long_lived_token(self, token: str) -> dict:
+        """Exchange a confirmed USER token; never call for system/business tokens."""
+        return await self._oauth_payload(
+            {
+                "client_id": settings.META_APP_ID,
+                "client_secret": settings.META_APP_SECRET,
+                "grant_type": "fb_exchange_token",
+                "fb_exchange_token": token,
+            },
+            public_error="WhatsApp could not extend the access token. Try reconnecting.",
+        )
 
     async def discover_assets(self, credentials: dict) -> list[DiscoveredAsset]:
         """List WABAs + phone numbers visible to the business token."""
@@ -997,20 +1135,27 @@ class WhatsAppAdapter(MetaProviderAdapter):
         """
         token = credentials.get("access_token", "")
         if not token:
-            return False, "missing token"
+            return False, "auth_rejected"
         business_id = (
             getattr(connection, "meta_business_id", None)
             or (connection.connection_metadata or {}).get("business_id")
         )
         if not business_id:
-            return False, "no business id on connection"
+            return False, "validation_failed"
         try:
             resp = await self._graph(
                 "GET", f"/{business_id}/owned_whatsapp_business_accounts", token
             )
+        except MetaAmbiguousError:
+            logger.warning("WhatsApp validate failed: interrupted provider response")
+            return False, "transient_error"
         except MetaAPIError as e:
             logger.warning("WhatsApp validate failed: graph error %s", e.status_code)
-            return False, f"graph error {e.status_code}"
+            if e.status_code in {400, 401, 403}:
+                return False, "auth_rejected"
+            if e.status_code in {408, 425, 429} or e.status_code >= 500:
+                return False, "transient_error"
+            return False, "validation_failed"
         return True, f"{len(resp.json().get('data', []))} WABA(s) visible"
 
     # `hours` is NOT a Graph param on whatsapp_business_profile (400 #131009);
@@ -1085,6 +1230,73 @@ class WhatsAppAdapter(MetaProviderAdapter):
             "points": points[:400],  # 90 days x few categories; bounded regardless
             "total": sum(p["count"] for p in points),
         }
+
+    @staticmethod
+    def parse_pricing_analytics(payload: dict) -> dict:
+        """Normalize Meta's approximate pricing facts without inventing cost.
+
+        ``end`` is exclusive in Meta's API, so each point is attributed to the
+        UTC calendar date of ``start``. A missing/null cost is an explicit
+        unavailable fact (common on shared Solution Partner credit lines), not
+        zero and never a locally estimated rate.
+        """
+        analytics = (payload or {}).get("pricing_analytics") or {}
+        points: list[dict] = []
+        for group in analytics.get("data") or []:
+            for raw in group.get("data_points") or []:
+                try:
+                    started = datetime.fromtimestamp(int(raw["start"]), tz=timezone.utc)
+                    volume = max(0, int(raw.get("volume") or 0))
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    continue
+                raw_cost = raw.get("cost", raw.get("approximate_cost"))
+                unavailable = bool(raw.get("cost_unavailable")) or raw_cost is None
+                cost = None
+                if not unavailable:
+                    try:
+                        parsed = Decimal(str(raw_cost))
+                        if not parsed.is_finite() or parsed < 0:
+                            raise InvalidOperation
+                        cost = parsed
+                    except (InvalidOperation, TypeError, ValueError):
+                        unavailable = True
+                points.append({
+                    "spend_date": started.date(),
+                    "phone": str(raw.get("phone_number") or raw.get("phone") or "")[:50] or None,
+                    "country": str(raw.get("country") or "")[:8].upper() or None,
+                    "pricing_category": str(raw.get("pricing_category") or "")[:50] or None,
+                    "pricing_type": str(raw.get("pricing_type") or "")[:50] or None,
+                    "tier": str(raw.get("tier") or "")[:50] or None,
+                    "volume": volume,
+                    "cost": cost,
+                    "cost_status": "unavailable" if unavailable else "available",
+                })
+        points.sort(key=lambda p: tuple(str(p[k]) for k in (
+            "spend_date", "phone", "country", "pricing_category", "pricing_type", "tier"
+        )))
+        return {
+            "points": points[:5000],
+            "currency": str(analytics.get("currency") or "")[:8].upper() or None,
+            "funding_mode": str(analytics.get("funding_mode") or "")[:40] or None,
+            "waba_timezone": str(analytics.get("timezone") or analytics.get("waba_timezone") or "")[:64] or None,
+            "messaging_account_id": str(analytics.get("messaging_account_id") or "")[:100] or None,
+        }
+
+    async def get_pricing_analytics(
+        self, waba_id: str, token: str, *, start: date, end: date
+    ) -> dict:
+        """Fetch authoritative approximate cost/volume for a UTC date window."""
+        if end <= start:
+            raise ValueError("end must be after start")
+        start_ts = int(datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+        end_ts = int(datetime.combine(end, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+        fields = (
+            f"pricing_analytics.start({start_ts}).end({end_ts}).granularity(DAILY)"
+            ".dimensions(COUNTRY,PHONE,PRICING_CATEGORY,PRICING_TYPE,TIER)"
+            ".metric_types(COST,VOLUME)"
+        )
+        resp = await self._graph("GET", f"/{waba_id}", token, params={"fields": fields})
+        return self.parse_pricing_analytics(resp.json() or {})
 
     async def get_business_profile(self, phone_number_id: str, token: str) -> dict:
         """Fetch the WhatsApp business profile for a number.
