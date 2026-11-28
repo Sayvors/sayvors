@@ -1,5 +1,6 @@
 """Tenant-facing billing routes (wallet, plan, entitlements, requests)."""
 import logging
+from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -315,6 +316,22 @@ async def list_purchase_requests(
 
     rows = await list_for_tenant(db, tenant_id_of(user), limit=limit)
     return {"items": [serialize(row) for row in rows]}
+
+
+@router.get("/whatsapp-usage")
+async def read_whatsapp_usage(
+    start: date = Query(...),
+    end: date = Query(...),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Tenant-scoped local quota plus Meta approximate spend, never raw payloads."""
+    from ..channels.meta.spend_api import tenant_usage
+
+    try:
+        return await tenant_usage(db, tenant_id_of(user), start=start, end=end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/entitlements")

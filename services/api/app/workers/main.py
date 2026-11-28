@@ -106,6 +106,7 @@ async def _amain() -> None:
     from ..modules.channels.meta.lead_action_worker import run_lead_action_worker
     from ..modules.channels.meta.digest_worker import run_lead_digest_sweeps
     from ..modules.channels.meta.escalation_worker import run_escalation_sweeps
+    from ..modules.channels.meta.spend_worker import run_whatsapp_spend_worker
     from ..modules.billing.ledger import run_hold_reaper
     from ..modules.email.campaigns import run_campaign_worker
     from ..modules.email.outbox import run_email_worker
@@ -152,6 +153,7 @@ async def _amain() -> None:
         "follower-snapshot": run_follower_snapshot_worker,
         "meta-events-ai-replies": run_meta_events_worker,
         "meta-token-rotation": run_token_rotation_worker,
+        "whatsapp-spend-sync": run_whatsapp_spend_worker,
         "lead-actions": run_lead_action_worker,
         "email-outbox": run_email_worker,
         "email-campaigns": run_campaign_worker,
