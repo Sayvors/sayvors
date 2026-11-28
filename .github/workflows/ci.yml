@@ -1,16 +1,11 @@
 name: CI
 
 on:
-  # The deploy-staging ci-gate waits for these check-runs on the pushed
-  # commit, so one run per merge to staging is all it needs there.
-  #
-  # Pull requests are gated too: development is where the work lands, and a
-  # branch nothing checks is a branch where the checks only run after the
-  # code has already been merged.
-  push:
-    branches: [staging, development]
+  # CI is the gate for staging PRs only. Development pushes intentionally do
+  # not burn Actions minutes; every change is checked when it is proposed for
+  # staging.
   pull_request:
-    branches: [development, staging]
+    branches: [staging]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
