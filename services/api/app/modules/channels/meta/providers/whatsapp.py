@@ -212,7 +212,12 @@ class WhatsAppAdapter(MetaProviderAdapter):
                 resp.status_code,
                 public=public_error,
             )
-        payload = resp.json()
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise MetaAPIError(
+                "Meta OAuth response was not JSON", 502, public=public_error,
+            ) from exc
         if not isinstance(payload, dict) or not payload.get("access_token"):
             raise MetaAPIError("Meta OAuth response had no access token", 502, public=public_error)
         return payload

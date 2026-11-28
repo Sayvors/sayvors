@@ -247,3 +247,22 @@ async def test_connect_transient_rotation_keeps_original_token_recoverable(
     assert conn.status == "error"
     assert conn.token_rotation_error == "exchange_transient"
     assert conn.token_expires_at is not None
+
+
+@pytest.mark.asyncio
+async def test_malformed_inspection_metadata_keeps_connect_recoverable():
+    from unittest.mock import AsyncMock
+    from app.modules.channels.meta.token_rotation import (
+        TokenMetadataError, prepare_whatsapp_credentials,
+    )
+
+    adapter = AsyncMock()
+    adapter.inspect_token.side_effect = TokenMetadataError("invalid expires_at")
+    prepared = await prepare_whatsapp_credentials(
+        adapter, {"access_token": "original-token", "expires_in": 3600}, now=NOW,
+    )
+    assert prepared["access_token"] == "original-token"
+    assert prepared["_token_status"] == "error"
+    assert prepared["token_rotation_error"] == "invalid_token_metadata"
+    assert prepared["token_expires_at"] == NOW + timedelta(hours=1)
+    adapter.exchange_long_lived_token.assert_not_awaited()

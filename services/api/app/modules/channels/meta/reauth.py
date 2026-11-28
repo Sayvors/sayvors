@@ -3,7 +3,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....modules.admin.models import AdminNotification
@@ -107,14 +107,22 @@ async def mark_token_expiring(
     *,
     expected_ciphertext: str | None = None,
     expected_lease_until: datetime | None = None,
+    metadata: dict | None = None,
 ) -> bool:
     """Record an unsupported expiring token and alert once per error episode."""
     code = _safe_code(failure_code)
     conditions = _claim_conditions(connection, expected_ciphertext, expected_lease_until)
-    conditions.append(MetaConnection.token_rotation_error != code)
+    conditions.append(or_(
+        MetaConnection.token_rotation_error.is_(None),
+        MetaConnection.token_rotation_error != code,
+    ))
+    values = {
+        "status": "error", "token_rotation_error": code,
+        "token_rotation_lease_until": None, "updated_at": datetime.now(timezone.utc),
+    }
+    values.update(metadata or {})
     result = await db.execute(update(MetaConnection).where(*conditions).values(
-        status="error", token_rotation_error=code,
-        token_rotation_lease_until=None, updated_at=datetime.now(timezone.utc),
+        **values,
     ).returning(MetaConnection.id))
     if result.scalar_one_or_none() is None:
         return False

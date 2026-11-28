@@ -301,13 +301,13 @@ async def _process_action(db, action: LeadAction) -> None:
             # our check and the send.
             action.status = "ineligible"
             action.ineligible_reason = "window_closed"
-            action.last_error = str(e)[:500]
+            action.last_error = e.public[:500]
         elif e.status_code == 429 or e.status_code >= 500:
-            _requeue_transient(action, f"{e.status_code}: {e}")
+            _requeue_transient(action, f"{e.status_code}: {e.public}")
         else:
             action.status = "failed"
             action.error_category = "permanent"
-            action.last_error = f"{e.status_code}: {e}"[:500]
+            action.last_error = f"{e.status_code}: {e.public}"[:500]
         return
     except MetaAmbiguousError as e:
         # _graph raises this instead of a raw read-timeout: the request may

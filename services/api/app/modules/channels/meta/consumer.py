@@ -2762,8 +2762,9 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                     # customer the reply: fall back to plain text once.
                     if use_buttons:
                         logger.warning(
-                            "WhatsApp interactive send rejected from=+%s: %s — "
-                            "falling back to text", from_wa[-6:], str(e)[:160],
+                            "WhatsApp interactive send rejected from=+%s: status=%s — "
+                            "falling back to text", from_wa[-6:],
+                            getattr(e, "status_code", ""),
                         )
                         try:
                             provider_msg_id = await adapter.send_text_message(

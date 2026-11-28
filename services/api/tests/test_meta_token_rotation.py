@@ -102,6 +102,16 @@ async def test_coarse_token_health():
         token_expires_at=None, data_access_expires_at=None,
         token_last_rotated_at=None, token_rotation_lease_until=None,
     )) == "healthy"
+    assert token_health(SimpleNamespace(
+        provider="whatsapp", status="active", token_kind="SYSTEM_USER",
+        token_expires_at=now + timedelta(days=2), data_access_expires_at=None,
+        token_last_rotated_at=None, token_rotation_lease_until=None,
+    )) == "rotating"
+    assert token_health(SimpleNamespace(
+        provider="whatsapp", status="active", token_kind="PAGE",
+        token_expires_at=None, data_access_expires_at=None,
+        token_last_rotated_at=None, token_rotation_lease_until=None,
+    )) == "rotating"
 
 
 async def _seed_reauth_connection(db, user_id):
