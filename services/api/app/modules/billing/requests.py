@@ -384,12 +384,9 @@ async def decide_request(
             )
             summary = f"${(request.amount or 0) / 100:,.2f} AI credit added."
 
-        # AI credit already writes its own ledger row via grant_credit with
-        # the `billing-request:{id}` key. The allowance and plan kinds do not,
-        # so record them here. A zero-amount posted event is a dated audit
-        # entry: it must not move the balance, only snapshot it. The key makes
-        # a retried decision a no-op even if a crashed worker left the request
-        # status pending.
+        # AI credit and plan changes write their own grant rows above. This
+        # additional zero-amount event is the dated decision snapshot for every
+        # non-credit approval; it never moves the balance.
         if request.kind != "ai_credit":
             from .ledger import ensure_ledger_initialized
 
