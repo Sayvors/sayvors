@@ -160,6 +160,8 @@ def _profile_out(
 
 
 def _conn_out(c) -> MetaConnectionOut:
+    from .token_rotation import token_health
+
     return MetaConnectionOut(
         id=c.id,
         provider=c.provider,
@@ -167,6 +169,14 @@ def _conn_out(c) -> MetaConnectionOut:
         meta_business_id=c.meta_business_id,
         scopes=list(c.scopes or []),
         status=c.status,
+        token_expires_at=(
+            c.token_expires_at.isoformat() if getattr(c, "token_expires_at", None) else None
+        ),
+        token_last_rotated_at=(
+            c.token_last_rotated_at.isoformat()
+            if getattr(c, "token_last_rotated_at", None) else None
+        ),
+        token_health=token_health(c),
         last_validated_at=c.last_validated_at.isoformat() if c.last_validated_at else None,
         last_successful_api_call_at=c.last_successful_api_call_at.isoformat()
         if c.last_successful_api_call_at

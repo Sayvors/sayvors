@@ -84,6 +84,7 @@ async def _send_nudge(db, action: LeadAction, text: str) -> str:
     propagates MetaAPIError / httpx errors for the caller's taxonomy."""
     from .consumer import _resolve_asset
     from .credentials import decrypt_connection_token
+    from .reauth import handle_meta_auth_failure
     from .service import get_adapter, get_instagram_page_credentials
 
     channel = (
@@ -104,9 +105,13 @@ async def _send_nudge(db, action: LeadAction, text: str) -> str:
         )
         if not token:
             raise _PermanentSendError("no access token on connection")
-        return await adapter.send_text_message(
-            channel.platform_user_id, token, action.contact_id, text
-        )
+        try:
+            return await adapter.send_text_message(
+                channel.platform_user_id, token, action.contact_id, text
+            )
+        except MetaAPIError as exc:
+            await handle_meta_auth_failure(db, asset.connection, exc)
+            raise
 
     if action.platform == "instagram":
         from .providers.instagram import InstagramAdapter

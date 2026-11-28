@@ -1685,6 +1685,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
     from ..service import categorize_message as _categorize
     from .credentials import decrypt_connection_token
     from .providers.base import MetaAmbiguousError, MetaAPIError
+    from .reauth import handle_meta_auth_failure
     from .service import get_adapter
 
     phone_number_id = event.get("external_asset_id") or ""
@@ -2342,19 +2343,21 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                     await db.commit()
                     raise
                 except MetaAPIError as e:
+                    auth_failed = await handle_meta_auth_failure(db, asset.connection, e)
+                    detail = "WhatsApp needs reconnection" if auth_failed else e.public
                     logger.error(
-                        "WhatsApp short-circuit send failed from=+%s: %s %s",
-                        from_wa[-6:], e.status_code, str(e)[:200],
+                        "WhatsApp short-circuit send failed from=+%s: status=%s",
+                        from_wa[-6:], e.status_code,
                     )
                     await _publish_typing(tenant_id, channel.id, from_wa, False)
                     if e.status_code == 429 or e.status_code >= 500:
                         inbound_row.ai_reply_status = "pending"
-                        inbound_row.ai_reply_error = str(e)[:300]
+                        inbound_row.ai_reply_error = detail[:300]
                         db.add(inbound_row)
                         await db.commit()
                         raise
                     inbound_row.ai_reply_status = "failed"
-                    inbound_row.ai_reply_error = str(e)[:500]
+                    inbound_row.ai_reply_error = detail[:500]
                     db.add(inbound_row)
                     await db.commit()
                     return
@@ -2773,10 +2776,14 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                             use_buttons = False
                             e = None
                     if e is not None:
+                        auth_failed = await handle_meta_auth_failure(db, asset.connection, e)
+                        detail = (
+                            "WhatsApp needs reconnection" if auth_failed
+                            else getattr(e, "public", type(e).__name__)
+                        )
                         logger.error(
-                            "WhatsApp send failed from=+%s: %s %s",
+                            "WhatsApp send failed from=+%s: status=%s",
                             from_wa[-6:], getattr(e, "status_code", ""),
-                            str(e)[:200],
                         )
                         status_code = getattr(e, "status_code", 422)
                         if status_code == 429 or status_code >= 500:
@@ -2786,7 +2793,7 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                             inbound_row.ai_reply_attempts = (
                                 inbound_row.ai_reply_attempts or 0
                             ) + 1
-                            inbound_row.ai_reply_error = str(e)[:300]
+                            inbound_row.ai_reply_error = detail[:300]
                             db.add(inbound_row)
                             await db.commit()
                             raise
@@ -2799,13 +2806,13 @@ async def _process_inbound_message(event: dict, data: dict) -> None:
                                 direction="outbound",
                                 content=encrypt_message_content(part),
                                 status="failed",
-                                error=str(e)[:500],
+                                error=detail[:500],
                                 contact_phone=encrypt_contact_phone(from_wa or None),
                                 contact_phone_hash=hash_contact_phone(from_wa or None),
                             )
                         )
                         inbound_row.ai_reply_status = "failed"
-                        inbound_row.ai_reply_error = str(e)[:500]
+                        inbound_row.ai_reply_error = detail[:500]
                         db.add(inbound_row)
                         await db.commit()
                         # Later parts would land without their context — stop.

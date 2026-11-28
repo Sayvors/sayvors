@@ -790,6 +790,7 @@ async def send_template(
 
     from ..channels.meta.credentials import decrypt_connection_token
     from ..channels.meta.providers.whatsapp import MetaAPIError
+    from ..channels.meta.reauth import handle_meta_auth_failure
     from ..channels.meta.service import get_adapter
 
     token = decrypt_connection_token(asset.connection)
@@ -806,16 +807,18 @@ async def send_template(
             template.name, template.language, values,
         )
     except MetaAPIError as e:
+        auth_failed = await handle_meta_auth_failure(db, asset.connection, e)
         row.status = "failed"
         row.error = (
-            f"The message window is closed and Meta rejected the template: {str(e)[:300]}"
+            "WhatsApp needs reconnection" if auth_failed
+            else f"The message window is closed and Meta rejected the template: {e.public[:300]}"
             if _WINDOW_ERROR in str(e)
-            else str(e)[:500]
+            else e.public[:500]
         )
         await db.commit()
         logger.warning(
-            "template send failed tenant=%s template=%s: %s",
-            tenant_id, template.name, str(e)[:200],
+            "template send failed tenant=%s template=%s: status=%s",
+            tenant_id, template.name, e.status_code,
         )
         return row, True
     except Exception as e:  # noqa: BLE001 - recorded, not raised

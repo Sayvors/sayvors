@@ -525,10 +525,26 @@ async def validate_connection(
     ok, detail = await adapter.validate_connection(
         conn, {"access_token": token or ""}
     )
-    conn.status = "active" if ok else "needs_reauth"
     conn.last_validated_at = _utcnow()
     if ok:
+        conn.status = "active"
         conn.last_successful_api_call_at = _utcnow()
+        if provider == "whatsapp":
+            conn.token_rotation_error = None
+            conn.token_rotation_attempts = 0
+            conn.token_rotation_next_attempt_at = None
+    elif provider == "whatsapp":
+        if detail in {"auth_rejected", "missing token"}:
+            from .reauth import mark_needs_reauth
+
+            await mark_needs_reauth(db, conn, "auth_rejected")
+        else:
+            conn.status = "error"
+            conn.token_rotation_error = (
+                "validation_transient" if detail == "transient_error" else "validation_failed"
+            )
+    else:
+        conn.status = "needs_reauth"
     db.add(conn)
     await db.commit()
     logger.info(

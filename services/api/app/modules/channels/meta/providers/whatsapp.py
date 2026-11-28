@@ -1046,20 +1046,24 @@ class WhatsAppAdapter(MetaProviderAdapter):
         """
         token = credentials.get("access_token", "")
         if not token:
-            return False, "missing token"
+            return False, "auth_rejected"
         business_id = (
             getattr(connection, "meta_business_id", None)
             or (connection.connection_metadata or {}).get("business_id")
         )
         if not business_id:
-            return False, "no business id on connection"
+            return False, "validation_failed"
         try:
             resp = await self._graph(
                 "GET", f"/{business_id}/owned_whatsapp_business_accounts", token
             )
         except MetaAPIError as e:
             logger.warning("WhatsApp validate failed: graph error %s", e.status_code)
-            return False, f"graph error {e.status_code}"
+            if e.status_code in {400, 401, 403}:
+                return False, "auth_rejected"
+            if e.status_code in {408, 425, 429} or e.status_code >= 500:
+                return False, "transient_error"
+            return False, "validation_failed"
         return True, f"{len(resp.json().get('data', []))} WABA(s) visible"
 
     # `hours` is NOT a Graph param on whatsapp_business_profile (400 #131009);

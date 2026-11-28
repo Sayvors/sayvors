@@ -12,6 +12,9 @@ class MetaConnectionOut(BaseModel):
     meta_business_id: str | None = None
     scopes: list[str] = []
     status: str
+    token_expires_at: str | None = None
+    token_last_rotated_at: str | None = None
+    token_health: Literal["healthy", "rotating", "reauth_required"] = "healthy"
     last_validated_at: str | None = None
     last_successful_api_call_at: str | None = None
     last_webhook_received_at: str | None = None
