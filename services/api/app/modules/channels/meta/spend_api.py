@@ -124,7 +124,10 @@ def _breakdown(rows, dimension: str, waba_names: dict[str, str]) -> list[dict]:
     return sorted(output, key=lambda row: row["volume"], reverse=True)[:200]
 
 
-async def tenant_usage(db, tenant_id: str, *, days: int) -> dict:
+async def tenant_usage(
+    db, tenant_id: str, *, days: int,
+    include_phone_breakdown: bool = True,
+) -> dict:
     start, end = _window(days)
     conditions = [
         WhatsAppSpendDaily.tenant_id == tenant_id,
@@ -174,7 +177,7 @@ async def tenant_usage(db, tenant_id: str, *, days: int) -> dict:
         "totals": total_dtos,
         "breakdowns": {
             "by_waba": _breakdown(rows, "waba_id", waba_names),
-            "by_phone": _breakdown(rows, "phone", waba_names),
+            "by_phone": _breakdown(rows, "phone", waba_names) if include_phone_breakdown else [],
             "by_category": _breakdown(rows, "pricing_category", waba_names),
         },
     }

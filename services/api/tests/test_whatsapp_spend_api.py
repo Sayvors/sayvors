@@ -5,10 +5,11 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
-from app.core.deps import require_admin
+from app.core.deps import get_current_user, require_admin
 from app.modules.billing.models import Plan, TenantSubscription
 from app.modules.channels.meta.spend_models import WhatsAppMonthlyUsage
 from app.modules.channels.meta.spend_store import upsert_spend_result
+from app.modules.team.models import TeamMember, TeamMemberChannel, TeamRole
 from app.modules.users.models import User
 
 
@@ -72,6 +73,87 @@ async def test_tenant_usage_is_scoped_and_keeps_funding_currencies_separate(clie
     assert body["breakdowns"]["by_waba"][0]["waba_id"] == "waba-1"
     assert body["breakdowns"]["by_phone"][0]["phone"] == "966500000001"
     assert body["breakdowns"]["by_category"][0]["category"] == "UTILITY"
+
+
+async def _seed_member(db, tenant_id: str, permissions: list[str], *, denied_channel: str | None = None):
+    uid = f"member-{tenant_id[-8:]}"
+    db.add(User(
+        id=uid, first_name="Workspace", last_name="Member", tenant_id=tenant_id,
+        email=f"{uid}@example.com", password_hash="x",
+    ))
+    role = TeamRole(tenant_id=tenant_id, name="Spend Viewer", permissions=permissions)
+    db.add(role)
+    await db.flush()
+    member = TeamMember(
+        tenant_id=tenant_id, user_id=uid, email=f"{uid}@example.com",
+        role_id=role.id, status="active",
+    )
+    db.add(member)
+    await db.flush()
+    if denied_channel:
+        db.add(TeamMemberChannel(
+            member_id=member.id, channel_id=denied_channel, level="none",
+        ))
+    await db.commit()
+    return await db.get(User, uid)
+
+
+def _auth_member(client, member):
+    from app.main import app
+    app.dependency_overrides[get_current_user] = lambda: member
+
+
+@pytest.mark.asyncio
+async def test_member_without_channels_view_gets_403(client, db):
+    tenant_id = "usage-owner-no-permission"
+    await _seed(db, tenant_id)
+    member = await _seed_member(db, tenant_id, [])
+    _auth_member(client, member)
+    try:
+        response = client.get("/api/v1/billing/whatsapp-usage", params={"days": 30})
+    finally:
+        from app.main import app
+        app.dependency_overrides.pop(get_current_user, None)
+    assert response.status_code == 403
+    assert "channels.view" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_authorized_member_receives_tenant_scoped_usage(client, db):
+    tenant_id = "usage-owner-authorized"
+    await _seed(db, tenant_id)
+    await _seed(db, "usage-owner-other", cost=Decimal("99.00"))
+    member = await _seed_member(db, tenant_id, ["channels.view"])
+    _auth_member(client, member)
+    try:
+        response = client.get("/api/v1/billing/whatsapp-usage", params={"days": 30})
+    finally:
+        from app.main import app
+        app.dependency_overrides.pop(get_current_user, None)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["used"] == 3
+    assert body["approximate_cost"] == 10.0
+    assert body["breakdowns"]["by_phone"][0]["phone"] == "966500000001"
+
+
+@pytest.mark.asyncio
+async def test_channel_deny_override_omits_phone_breakdown(client, db):
+    tenant_id = "usage-owner-restricted"
+    await _seed(db, tenant_id)
+    member = await _seed_member(
+        db, tenant_id, ["channels.view"], denied_channel="restricted-channel"
+    )
+    _auth_member(client, member)
+    try:
+        response = client.get("/api/v1/billing/whatsapp-usage", params={"days": 30})
+    finally:
+        from app.main import app
+        app.dependency_overrides.pop(get_current_user, None)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["totals"][0]["volume"] == 2
+    assert body["breakdowns"]["by_phone"] == []
 
 
 @pytest.mark.asyncio

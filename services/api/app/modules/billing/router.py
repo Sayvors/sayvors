@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...config import settings
 from ...core.deps import get_current_user, get_db
 from ..auth.rate_limit import rate_limit
-from ..team.context import tenant_id_of
+from ..team.context import TenantContext, require_perm, tenant_id_of
 from . import service
 from .schemas import (
     BillingProfileIn,
@@ -320,14 +320,23 @@ async def list_purchase_requests(
 @router.get("/whatsapp-usage")
 async def read_whatsapp_usage(
     days: int = Query(30, ge=1, le=365),
-    user=Depends(get_current_user),
+    ctx: TenantContext = Depends(require_perm("channels.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Tenant-scoped local quota plus Meta approximate spend, never raw payloads."""
     from ..channels.meta.spend_api import tenant_usage
 
+    # A role-level viewer can still have a channel-level deny. Phone-level
+    # spend cannot be safely mapped to those overrides, so omit it for any
+    # member with a deny while retaining tenant-scoped aggregate usage.
+    include_phone = ctx.is_owner or not any(
+        level == "none" for level in ctx.channel_overrides.values()
+    )
     try:
-        return await tenant_usage(db, tenant_id_of(user), days=days)
+        return await tenant_usage(
+            db, ctx.tenant_id, days=days,
+            include_phone_breakdown=include_phone,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
