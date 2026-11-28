@@ -149,6 +149,11 @@ def _before_send_transaction(event: dict, hint: dict) -> dict | None:
     return _scrub(event)
 
 
+def _before_send_span(span: dict, hint: dict) -> dict:
+    """Sentry 3 sends serialized spans; sanitize before transmission."""
+    return _scrub(span)
+
+
 # Idempotency guard. Repeated init in one process (lifespan restart, reload,
 # double entrypoint) would otherwise discard the first config and log warnings.
 _configured = False
@@ -176,13 +181,14 @@ def init_observability(service: str = DEFAULT_SERVICE) -> bool:
             "release": build_release(),
             "traces_sample_rate": 0.1,
             "before_send": _before_send,
-            "before_send_transaction": _before_send_transaction,
         }
         if _SENTRY_MAJOR < 3:
-            # Legacy 2.x options removed in Sentry 3. No user emails/IPs by
-            # default there; opt in explicitly if ever needed.
+            # Legacy 2.x options removed in Sentry 3.
             options["profiles_sample_rate"] = 0.1
             options["send_default_pii"] = False
+            options["before_send_transaction"] = _before_send_transaction
+        else:
+            options["before_send_span"] = _before_send_span
         sentry_sdk.init(**options)
         _configured = True
         logger.info(

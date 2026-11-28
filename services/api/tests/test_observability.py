@@ -145,6 +145,8 @@ def test_init_omits_profiles_option_on_sentry_v3(monkeypatch):
     assert observability.init_observability("test") is True
     assert "profiles_sample_rate" not in captured
     assert "send_default_pii" not in captured
+    assert "before_send_transaction" not in captured
+    assert captured["before_send_span"] is observability._before_send_span
     assert captured["traces_sample_rate"] == 0.1
 
 
