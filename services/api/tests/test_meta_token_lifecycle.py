@@ -338,3 +338,97 @@ async def test_connect_user_exchange_without_expiry_uses_user_only_fallback(
     assert conn.token_expires_at is not None
     assert 59 <= (conn.token_expires_at.replace(tzinfo=timezone.utc) - before).days <= 60
     assert conn.connection_metadata["token_expiry_source"] == "user_exchange_fallback_60d"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_session_without_code_cannot_reset_connection_or_alert_dedupe(
+    client, db, user_id, monkeypatch,
+):
+    from unittest.mock import AsyncMock
+    from sqlalchemy import func, select
+    from app.modules.admin.models import AdminNotification
+    from app.modules.channels.meta import oauth, service
+    from app.modules.channels.meta.credentials import encrypt_credential
+    from app.modules.channels.meta.models import MetaConnection
+    from app.modules.channels.meta.reauth import mark_token_expiring
+    from app.modules.notifications.models import Notification
+    from app.modules.users.models import User
+
+    db.add(User(
+        id=user_id, first_name="Test", last_name="Tenant",
+        email=f"{user_id}@example.com", password_hash="x",
+    ))
+    conn = MetaConnection(
+        id="code-less-existing", tenant_id=user_id, provider="whatsapp",
+        access_token_encrypted=encrypt_credential("existing-token"),
+        token_kind="USER", status="error", token_rotation_error=None,
+    )
+    db.add(conn)
+    await db.commit()
+    ciphertext = conn.access_token_encrypted
+    assert await mark_token_expiring(
+        db, conn, "rotation_unsupported", expected_ciphertext=ciphertext,
+    ) is True
+    await db.commit()
+    state, _ = await oauth.create_transaction(db, user_id, "whatsapp")
+    adapter = AsyncMock()
+    adapter.discover_assets.return_value = []
+    monkeypatch.setattr(service, "get_adapter", lambda _provider: adapter)
+
+    response = client.post(
+        "/api/v1/meta/whatsapp/session",
+        json={"state": state, "waba_id": "replacement-waba"},
+        headers={"host": "localhost"},
+    )
+
+    assert response.status_code == 422, response.text
+    await db.refresh(conn)
+    assert conn.access_token_encrypted == ciphertext
+    assert conn.status == "error"
+    assert conn.token_rotation_error == "rotation_unsupported"
+    adapter.exchange_code.assert_not_awaited()
+    assert await mark_token_expiring(
+        db, conn, "rotation_unsupported", expected_ciphertext=ciphertext,
+    ) is False
+    await db.commit()
+    assert (await db.execute(select(func.count()).select_from(Notification))).scalar_one() == 1
+    assert (await db.execute(select(func.count()).select_from(AdminNotification))).scalar_one() == 1
+
+
+@pytest.mark.asyncio
+async def test_store_whatsapp_connection_without_token_fails_closed(db):
+    from app.modules.channels.meta import service
+    from app.modules.channels.meta.credentials import decrypt_credential
+
+    conn = await service.store_connection(
+        db, "tokenless-upsert", "whatsapp", {"access_token": "existing-token"},
+    )
+    ciphertext = conn.access_token_encrypted
+    conn.status = "error"
+    conn.token_rotation_error = "rotation_unsupported"
+    await db.commit()
+
+    with pytest.raises(ValueError, match="access token"):
+        await service.store_connection(
+            db, "tokenless-upsert", "whatsapp", {"business_id": "replacement-business"},
+        )
+
+    await db.refresh(conn)
+    assert conn.access_token_encrypted == ciphertext
+    assert decrypt_credential(conn.access_token_encrypted) == "existing-token"
+    assert conn.status == "error"
+    assert conn.token_rotation_error == "rotation_unsupported"
+    assert conn.meta_business_id is None
+
+
+@pytest.mark.asyncio
+async def test_store_whatsapp_connection_without_token_cannot_create_row(db):
+    from sqlalchemy import func, select
+    from app.modules.channels.meta import service
+    from app.modules.channels.meta.models import MetaConnection
+
+    with pytest.raises(ValueError, match="access token"):
+        await service.store_connection(
+            db, "tokenless-insert", "whatsapp", {"waba_id": "waba-only"},
+        )
+    assert (await db.execute(select(func.count()).select_from(MetaConnection))).scalar_one() == 0

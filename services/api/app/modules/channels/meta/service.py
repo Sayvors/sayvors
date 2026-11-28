@@ -116,6 +116,8 @@ async def store_connection(
 ) -> MetaConnection:
     """Upsert the (tenant, provider) connection with encrypted token."""
     token = credentials.get("access_token", "")
+    if provider == "whatsapp" and not token:
+        raise ValueError("WhatsApp connection requires an access token")
     conn = await get_connection(db, tenant_id, provider)
     if conn is None:
         conn = MetaConnection(id=str(uuid.uuid4()), tenant_id=tenant_id, provider=provider)

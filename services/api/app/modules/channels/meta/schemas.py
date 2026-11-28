@@ -70,7 +70,7 @@ class MetaWhatsAppSession(BaseModel):
     """Embedded Signup v4 session completion posted by the frontend."""
 
     state: str
-    code: str | None = Field(None, description="Auth code from authResponse")
+    code: str = Field(..., min_length=1, description="Auth code from authResponse")
     waba_id: str | None = None
     phone_number_id: str | None = None
     business_id: str | None = None
